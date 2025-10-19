@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Store Management — Barnwell Grill</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+:root{
+  --primary:#2563eb;
+  --primary-600:#1d4ed8;
+  --brand-blue:#225CE4;
+  --bg:#f8fafc;
+  --surface:#ffffff;
+  --muted:#6b7280;
+  --text:#0b1220;
+  --border:#e6eefc;
+  --danger:#ef4444;
+  --radius:10px;
+  --shadow-1:0 6px 18px rgba(15,23,42,0.06);
+  --shadow-2:0 10px 30px rgba(15,23,42,0.08);
+  --max-width:760px;
+  --control-height:44px;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+.container{max-width:var(--max-width);margin:18px auto;padding:18px}
+.app-header{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.brand-icon{width:40px;height:40px;border-radius:8px;background:linear-gradient(180deg,var(--primary),var(--primary-600));display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+.h1{font-size:18px;font-weight:900}
+.small{font-size:13px;color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow-1);margin-bottom:12px}
+.card-title{font-weight:900;margin:0 0 8px 0;font-size:15px}
+.row{display:flex;gap:12px;align-items:center}
+.row.wrap{flex-wrap:wrap}
+.col{flex:1}
+.field{display:flex;flex-direction:column;gap:8px}
+.label{font-weight:800;font-size:13px}
+.hint{font-size:12px;color:var(--muted)}
+.input, select, input[type="time"], input[type="date"], input[type="number"]{
+  height:var(--control-height);padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#fbfdff;color:#0b1220;font-size:14px;outline:none;
+}
+.input:focus, select:focus{box-shadow:0 6px 18px rgba(34,92,228,0.06);border-color:var(--brand-blue)}
+.segment{display:inline-flex;border-radius:999px;background:#fff;border:1px solid var(--border);padding:4px}
+.segment button{border:0;background:transparent;padding:8px 14px;border-radius:999px;font-weight:800;cursor:pointer;color:var(--muted)}
+.segment button.active{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;box-shadow:var(--shadow-2)}
+.segment-wrap{display:flex;align-items:center;min-width:180px;max-width:260px}
+.radios{display:flex;gap:8px;align-items:center}
+.radio-btn{border:1px solid var(--border);padding:8px 12px;border-radius:10px;cursor:pointer;background:#fff;font-weight:800;color:var(--muted)}
+.radio-btn.selected{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;border-color:transparent;box-shadow:var(--shadow-2)}
+.slider-wrap{display:flex;align-items:center;gap:12px}
+.slider{flex:1}
+.slider input[type="range"]{width:100%}
+.slider-value{min-width:56px;padding:6px 8px;border-radius:8px;background:#fff;border:1px solid var(--border);text-align:center;font-weight:800}
+
+.week-list{display:flex;flex-direction:column;gap:8px}
+.day-row{display:flex;align-items:center;gap:14px;padding:8px 0;}
+.day-label{font-weight:900;font-size:15px;width:60px}
+.mini-toggle{
+  width:44px;height:26px;border-radius:999px;background:#f1f5f9;border:1px solid rgba(0,0,0,0.06);position:relative;cursor:pointer;
+  display:inline-flex;align-items:center;transition:background .18s;
+}
+.mini-toggle .knob{
+  width:20px;height:20px;background:#fff;border-radius:50%;box-shadow:0 2px 6px rgba(2,6,23,0.06);
+  transition:transform .18s ease, background .18s ease;transform: translateX(0);
+}
+.mini-toggle.on{background:linear-gradient(90deg,var(--primary),var(--primary-600));border-color:transparent;}
+.mini-toggle.on .knob{transform: translateX(18px);}
+.mini-toggle.off{background:#e6eefc;}
+.hours-row{display:flex;justify-content:center;gap:12px;padding:8px 0;}
+.hour-box{display:flex;align-items:center;gap:6px;background:#fbfdff;border:1px solid var(--border);border-radius:8px;padding:5px 12px;}
+.hour-box input[type="time"]{border:0;background:transparent;font-size:15px;padding:0 4px;min-width:60px;}
+@media(max-width:500px){.day-label{width:42px}.hours-row{flex-direction:column;gap:6px}}
+.preview{background:linear-gradient(180deg,#fff,#fbfdff);padding:12px;border-radius:8px;border:1px solid rgba(15,23,42,0.03);font-size:14px}
+.actions{display:flex;gap:10px;align-items:center;margin-top:8px}
+.btn{padding:10px 14px;border-radius:10px;border:0;font-weight:900;cursor:pointer}
+.btn.primary{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;box-shadow:var(--shadow-2)}
+.btn.ghost{background:#fff;border:1px solid var(--border);color:#0b1220}
+.notice{padding:10px 12px;border-radius:10px;border:1px solid rgba(0,0,0,0.04);background:#fff6f6;color:var(--danger);font-weight:800;margin-bottom:12px;text-align:center}
+@media(max-width:720px){
+  .row{flex-direction:column;align-items:stretch}
+  .segment-wrap{max-width:100%}
+}
+</style>
+</head>
+<body>
+  <div class="container" role="main" aria-label="Store Management">
+    <div class="app-header">
+      <div class="brand-icon">BG</div>
+      <div>
+        <div class="h1">Store Management</div>
+        <div class="small">Admin controls for ordering — owner only</div>
+      </div>
+    </div>
+
+    <div id="adminNotice" class="notice" style="display:none"></div>
+
+    <div class="card" aria-labelledby="section-manual">
+      <div id="section-manual" class="card-title">Store status</div>
+      <div class="row wrap" style="align-items:center">
+        <div class="field" style="margin:0">
+          <div class="segment-wrap">
+            <div class="segment" role="tablist" aria-label="Store open or closed">
+              <button id="seg-open" class="active" role="tab" aria-selected="true">Open</button>
+              <button id="seg-closed" role="tab" aria-selected="false">Closed</button>
+            </div>
+          </div>
+        </div>
+        <div class="field" style="min-width:260px;margin-left:8px">
+          <label class="label">Reopen at (optional)</label>
+          <div style="display:flex;gap:8px">
+            <input id="reopenDate" type="date" class="input" />
+            <input id="reopenTime" type="time" class="input" />
+          </div>
+          <div class="hint">Set a future date/time to auto-open. Leave blank to require manual reopen.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" aria-labelledby="section-hours">
+      <div id="section-hours" class="card-title">Weekly opening hours</div>
+      <div class="small" style="margin-bottom:10px">Set which days you are open, and hours for each. Times are used for slots.</div>
+      <div id="weekList" class="week-list"></div>
+    </div>
+
+    <div class="card" aria-labelledby="section-slots">
+      <div id="section-slots" class="card-title">Slots & minimums</div>
+      <div style="display:flex;gap:14px;align-items:center;margin-bottom:12px">
+        <div style="flex:1">
+          <label class="label">Mode</label>
+          <div class="segment" role="tablist" aria-label="Choose mode">
+            <button id="seg-collection" class="active" role="tab" aria-selected="true">Collection</button>
+            <button id="seg-delivery" role="tab" aria-selected="false">Delivery</button>
+          </div>
+        </div>
+      </div>
+      <div id="modeAreas" style="display:flex;flex-direction:column;gap:12px">
+        <div id="mode-collection" class="mode-area">
+          <div class="row wrap">
+            <div class="field col">
+              <label class="label">Set time slots</label>
+              <div class="radios" id="collectionRadios">
+                <div class="radio-btn selected" data-value="15">15m</div>
+                <div class="radio-btn" data-value="30">30m</div>
+                <div class="radio-btn" data-value="60">60m</div>
+              </div>
+            </div>
+            <div class="field" style="min-width:220px">
+              <label class="label">Minimum order (£)</label>
+              <input id="collectionMinOrder" class="input" type="number" min="0" step="0.01" />
+            </div>
+          </div>
+          <div style="margin-top:6px">
+            <label class="label">Minimum lead time</label>
+            <div class="slider-wrap" style="gap:10px;align-items:center">
+              <div class="slider" style="flex:1">
+                <input id="collectionLead" type="range" min="0" max="90" step="5" value="30" />
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:6px">
+                  <span>0m</span><span>30m</span><span>60m</span><span>90m</span>
+                </div>
+              </div>
+              <div class="slider-value" id="collectionLeadVal">30m</div>
+            </div>
+          </div>
+        </div>
+        <div id="mode-delivery" class="mode-area" style="display:none">
+          <div class="row wrap">
+            <div class="field col">
+              <label class="label">Set time slots</label>
+              <div class="radios" id="deliveryRadios">
+                <div class="radio-btn selected" data-value="15">15m</div>
+                <div class="radio-btn" data-value="30">30m</div>
+                <div class="radio-btn" data-value="60">60m</div>
+              </div>
+            </div>
+            <div class="field" style="min-width:220px">
+              <label class="label">Minimum order (£)</label>
+              <input id="deliveryMinOrder" class="input" type="number" min="0" step="0.01" />
+            </div>
+          </div>
+          <div style="margin-top:6px">
+            <label class="label">Minimum lead time</label>
+            <div class="slider-wrap" style="gap:10px;align-items:center">
+              <div class="slider" style="flex:1">
+                <input id="deliveryLead" type="range" min="0" max="90" step="5" value="45" />
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:6px">
+                  <span>0m</span><span>30m</span><span>60m</span><span>90m</span>
+                </div>
+              </div>
+              <div class="slider-value" id="deliveryLeadVal">45m</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="height:12px"></div>
+      <div class="preview">
+        <div style="font-weight:800;margin-bottom:6px">Preview</div>
+        <div id="previewText" class="small">No settings loaded yet.</div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px">
+      <div class="small">Changes are stored on the server and applied to the ordering system automatically.</div>
+      <div class="actions">
+        <button id="reloadBtn" class="btn ghost">Reload</button>
+        <button id="saveBtn" class="btn primary">Save settings</button>
+      </div>
+    </div>
+    <div id="status" class="small" style="margin-top:10px;color:var(--muted)"></div>
+  </div>
+
+<script>
+(function(){
+  // === Proxy + token (no visual change; just wiring) ===
+  const PROXY_BASE =
+    (localStorage.getItem('store_proxy_base_override') || '').trim() ||
+    "https://api.barnwellpizzandgrill.co.uk";
+  const getAdminToken = () => (localStorage.getItem('testing_admin_token') || '').trim();
+
+  // Robust API helper: tries proxy base first; sends x-admin-token
+  async function api(path, options = {}, { timeout = 12000 } = {}){
+    const rel = path.startsWith('/') ? path : '/' + path;
+    const base = PROXY_BASE.replace(/\/+$/,'');
+    const headers = Object.assign({}, options.headers || {});
+    if(options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+    if(!headers['Accept']) headers['Accept'] = 'application/json';
+    headers['ngrok-skip-browser-warning'] = '1';
+    const tok = getAdminToken();
+    if(tok) headers['x-admin-token'] = tok;
+
+    const fetchOptions = Object.assign({}, options, {
+      headers,
+      cache: 'no-store',
+      credentials: 'omit', // we use token header, not cookies
+      mode: 'cors',
+      redirect: 'follow'
+    });
+
+    const doFetch = (url) => new Promise((resolve, reject) => {
+      const ac = new AbortController(); const id = setTimeout(()=>ac.abort(), timeout);
+      fetch(url, Object.assign({}, fetchOptions, { signal: ac.signal }))
+        .then(async (res) => {
+          clearTimeout(id);
+          if(!res.ok){
+            const txt = await res.text().catch(()=>res.statusText||'');
+            return reject(new Error(`${url} failed ${res.status}: ${txt}`));
+          }
+          const txt = await res.text().catch(()=>null);
+          if(!txt) return resolve(null);
+          try{ resolve(JSON.parse(txt)); }catch{ resolve(txt); }
+        })
+        .catch(err => { clearTimeout(id); reject(err); });
+    });
+
+    try { return await doFetch(base + rel); }
+    catch (err){ console.warn('[api] proxy fetch failed, will attempt direct fetch:', err); }
+    return await doFetch(rel);
+  }
+
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const weekList = document.getElementById('weekList');
+  const statusEl = document.getElementById('status');
+  const adminNotice = document.getElementById('adminNotice');
+
+  // Build weekly rows (unchanged styling)
+  days.forEach((d, i) => {
+    const row = document.createElement('div');
+    row.className = 'day-row';
+    row.dataset.day = i;
+
+    const label = document.createElement('div');
+    label.className = 'day-label';
+    label.textContent = d;
+
+    const toggle = document.createElement('div');
+    toggle.className = 'mini-toggle on';
+    toggle.setAttribute('role','switch');
+    toggle.setAttribute('aria-checked','true');
+    toggle.dataset.day = i;
+    toggle.innerHTML = `<div class="knob"></div>`;
+
+    const hoursRow = document.createElement('div');
+    hoursRow.className = 'hours-row';
+    hoursRow.innerHTML = `
+      <div class="hour-box">From <input type="time" class="day-open" data-day="${i}" value="11:00"></div>
+      <div class="hour-box">To <input type="time" class="day-close" data-day="${i}" value="22:00"></div>
+    `;
+
+    toggle.addEventListener('click', () => {
+      const isOpen = toggle.classList.contains('on');
+      if(isOpen){
+        toggle.classList.remove('on'); toggle.classList.add('off');
+        toggle.setAttribute('aria-checked','false');
+        hoursRow.style.display = 'none';
+      }else{
+        toggle.classList.remove('off'); toggle.classList.add('on');
+        toggle.setAttribute('aria-checked','true');
+        hoursRow.style.display = '';
+      }
+    });
+
+    hoursRow.style.display = '';
+    row.appendChild(label);
+    row.appendChild(toggle);
+    row.appendChild(hoursRow);
+    weekList.appendChild(row);
+  });
+
+  // Helpers
+  function setStatus(msg, err=false){ statusEl.textContent = msg; statusEl.style.color = err ? 'var(--danger)' : 'var(--muted)'; }
+  function showAdminNotice(text){ adminNotice.style.display='block'; adminNotice.textContent = text; }
+  function hideAdminNotice(){ adminNotice.style.display='none'; adminNotice.textContent = ''; }
+
+  // store open/closed segmented control
+  const segOpen = document.getElementById('seg-open');
+  const segClosed = document.getElementById('seg-closed');
+  function setStoreMode(mode){
+    if(mode === 'open'){
+      segOpen.classList.add('active'); segOpen.setAttribute('aria-selected','true');
+      segClosed.classList.remove('active'); segClosed.setAttribute('aria-selected','false');
+    } else {
+      segClosed.classList.add('active'); segClosed.setAttribute('aria-selected','true');
+      segOpen.classList.remove('active'); segOpen.setAttribute('aria-selected','false');
+    }
+  }
+  segOpen.addEventListener('click', ()=> setStoreMode('open'));
+  segClosed.addEventListener('click', ()=> setStoreMode('closed'));
+
+  // mode segmented (collection/delivery)
+  const segCollection = document.getElementById('seg-collection');
+  const segDelivery = document.getElementById('seg-delivery');
+  const areaCollection = document.getElementById('mode-collection');
+  const areaDelivery = document.getElementById('mode-delivery');
+  function showMode(mode){
+    if(mode === 'collection'){
+      segCollection.classList.add('active'); segCollection.setAttribute('aria-selected','true');
+      segDelivery.classList.remove('active'); segDelivery.setAttribute('aria-selected','false');
+      areaCollection.style.display = ''; areaDelivery.style.display = 'none';
+    } else {
+      segDelivery.classList.add('active'); segDelivery.setAttribute('aria-selected','true');
+      segCollection.classList.remove('active'); segCollection.setAttribute('aria-selected','false');
+      areaDelivery.style.display = ''; areaCollection.style.display = 'none';
+    }
+  }
+  segCollection.addEventListener('click', ()=> showMode('collection'));
+  segDelivery.addEventListener('click', ()=> showMode('delivery'));
+
+  function setRadioSelection(container, value){
+    const radios = document.querySelectorAll(container + ' .radio-btn');
+    radios.forEach(r => {
+      if(Number(r.dataset.value) === Number(value)) r.classList.add('selected');
+      else r.classList.remove('selected');
+    });
+  }
+
+  function populateForm(cfg){
+    if(!cfg) cfg = {};
+    // Proxy returns { settings: {...} }. If called directly, it may already be the object.
+    if(cfg.settings && typeof cfg.settings === 'object') cfg = cfg.settings;
+
+    setStoreMode(cfg.manualClosed ? 'closed' : 'open');
+
+    if(cfg.reopenAt){
+      try{
+        const dt = new Date(cfg.reopenAt);
+        document.getElementById('reopenDate').value = dt.toISOString().slice(0,10);
+        document.getElementById('reopenTime').value = dt.toISOString().slice(11,16);
+      }catch(e){ document.getElementById('reopenDate').value=''; document.getElementById('reopenTime').value=''; }
+    } else {
+      document.getElementById('reopenDate').value=''; document.getElementById('reopenTime').value='';
+    }
+
+    days.forEach((_, i) => {
+      const row = document.querySelector('.day-row[data-day="'+i+'"]');
+      const toggle = row.querySelector('.mini-toggle');
+      const hoursRow = row.querySelector('.hours-row');
+      const w = cfg.weekly && cfg.weekly[i] ? cfg.weekly[i] : { enabled:true, open:'11:00', close:'22:00' };
+      row.querySelector('.day-open').value = w.open || '11:00';
+      row.querySelector('.day-close').value = w.close || '22:00';
+      if(w.enabled){
+        toggle.classList.add('on'); toggle.classList.remove('off');
+        toggle.setAttribute('aria-checked','true');
+        hoursRow.style.display = '';
+      }else{
+        toggle.classList.remove('on'); toggle.classList.add('off');
+        toggle.setAttribute('aria-checked','false');
+        hoursRow.style.display = 'none';
+      }
+    });
+
+    const col = cfg.slotConfig?.collection || { granularity_minutes:60, min_lead_minutes:30, min_order_pence:800 };
+    setRadioSelection('#collectionRadios', col.granularity_minutes || 60);
+    document.getElementById('collectionLead').value = col.min_lead_minutes || 30;
+    document.getElementById('collectionLeadVal').textContent = (col.min_lead_minutes || 30) + 'm';
+    document.getElementById('collectionMinOrder').value = ((col.min_order_pence || 800) / 100).toFixed(2);
+
+    const del = cfg.slotConfig?.delivery || { granularity_minutes:60, min_lead_minutes:45, min_order_pence:1200 };
+    setRadioSelection('#deliveryRadios', del.granularity_minutes || 60);
+    document.getElementById('deliveryLead').value = del.min_lead_minutes || 45;
+    document.getElementById('deliveryLeadVal').textContent = (del.min_lead_minutes || 45) + 'm';
+    document.getElementById('deliveryMinOrder').value = ((del.min_order_pence || 1200) / 100).toFixed(2);
+
+    renderPreview(cfg);
+
+    if(cfg.manualClosed){
+      const label = cfg.reopenAt ? `Ordering is closed. Next: ${new Date(cfg.reopenAt).toLocaleString()}` : 'Ordering is closed (manual).';
+      showAdminNotice(label);
+    } else {
+      hideAdminNotice();
+    }
+  }
+
+  function gatherForm(){
+    const manualClosed = document.getElementById('seg-closed').classList.contains('active');
+    const date = document.getElementById('reopenDate').value;
+    const time = document.getElementById('reopenTime').value;
+    const reopenAt = (date && time) ? new Date(date + 'T' + time).toISOString() : null;
+
+    const weekly = {};
+    days.forEach((_, i) => {
+      const row = document.querySelector('.day-row[data-day="'+i+'"]');
+      const enabled = row.querySelector('.mini-toggle').classList.contains('on');
+      weekly[i] = {
+        enabled: enabled,
+        open: row.querySelector('.day-open').value || '11:00',
+        close: row.querySelector('.day-close').value || '22:00'
+      };
+    });
+
+    const slotConfig = {
+      collection: {
+        granularity_minutes: Number(document.querySelector('#collectionRadios .radio-btn.selected')?.dataset.value || 60),
+        min_lead_minutes: Number(document.getElementById('collectionLead').value || 30),
+        min_order_pence: Math.round(Number(document.getElementById('collectionMinOrder').value || 8) * 100)
+      },
+      delivery: {
+        granularity_minutes: Number(document.querySelector('#deliveryRadios .radio-btn.selected')?.dataset.value || 60),
+        min_lead_minutes: Number(document.getElementById('deliveryLead').value || 45),
+        min_order_pence: Math.round(Number(document.getElementById('deliveryMinOrder').value || 12) * 100)
+      }
+    };
+
+    return { manualClosed, reopenAt, weekly, slotConfig };
+  }
+
+  function validate(cfg){
+    for(let i=0;i<7;i++){
+      if(cfg.weekly[i].enabled){
+        const open = cfg.weekly[i].open;
+        const close = cfg.weekly[i].close;
+        if(!open || !close) return `Day ${days[i]}: From and To times required when day is open.`;
+        if(open >= close) return `Day ${days[i]}: 'From' must be before 'To'.`;
+      }
+    }
+    const granValues = [cfg.slotConfig.collection.granularity_minutes, cfg.slotConfig.delivery.granularity_minutes];
+    if(granValues.some(g => g <= 0 || g % 5 !== 0)) return 'Slot must be a positive multiple of 5 minutes.';
+    const maxLead = 90;
+    if(cfg.slotConfig.collection.min_lead_minutes > maxLead || cfg.slotConfig.delivery.min_lead_minutes > maxLead) return `Min lead time must be ${maxLead} minutes or less.`;
+    return null;
+  }
+
+  async function loadSettings(){
+    setStatus('Loading…');
+    try{
+      const j = await api('/api/admin/settings', { method:'GET' });
+      if(!j || typeof j !== 'object') throw new Error('Empty response');
+      populateForm(j);
+      setStatus('Loaded');
+    }catch(e){
+      console.warn(e);
+      setStatus('Unable to load settings: ' + (e.message || e), true);
+      if(!getAdminToken()){
+        const t = (prompt('Enter admin token (stored locally):','') || '').trim();
+        if(t){ localStorage.setItem('testing_admin_token', t); setStatus('Token saved. Press Reload.'); }
+      }
+    }
+  }
+
+  async function saveSettings(){
+    const payload = gatherForm();
+    const err = validate(payload);
+    if(err){ setStatus(err, true); return; }
+
+    setStatus('Saving…');
+    try{
+      await api('/api/admin/settings', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      setStatus('Saved');
+      populateForm(payload);
+      try { window.dispatchEvent(new CustomEvent('barnwell:adminSettingsSaved', { detail: payload })); }catch(e){}
+    }catch(e){
+      console.error(e);
+      setStatus('Save failed: ' + (e.message || e), true);
+    }
+  }
+
+  function renderPreview(cfg){
+    if(cfg.settings && typeof cfg.settings === 'object') cfg = cfg.settings;
+    const pieces = [];
+    if(cfg.manualClosed){
+      pieces.push(`<strong>Manual closed:</strong> Yes`);
+      if(cfg.reopenAt) pieces.push(`<strong>Reopen:</strong> ${new Date(cfg.reopenAt).toLocaleString()}`);
+    } else {
+      pieces.push(`<strong>Manual closed:</strong> No`);
+    }
+    const now = new Date();
+    const dow = now.getDay();
+    const today = cfg.weekly && cfg.weekly[dow] ? cfg.weekly[dow] : { enabled:false };
+    pieces.push(`<strong>Today's hours (${days[dow]}):</strong> ${today && today.enabled ? `${today.open} — ${today.close}` : 'Closed'}`);
+    pieces.push(`<strong>Collection:</strong> slot ${cfg.slotConfig.collection.granularity_minutes}m • lead ${cfg.slotConfig.collection.min_lead_minutes}m • min £${(cfg.slotConfig.collection.min_order_pence/100).toFixed(2)}`);
+    pieces.push(`<strong>Delivery:</strong> slot ${cfg.slotConfig.delivery.granularity_minutes}m • lead ${cfg.slotConfig.delivery.min_lead_minutes}m • min £${(cfg.slotConfig.delivery.min_order_pence/100).toFixed(2)}`);
+    document.getElementById('previewText').innerHTML = pieces.join('<br>');
+  }
+
+  document.querySelectorAll('#collectionRadios .radio-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('#collectionRadios .radio-btn').forEach(b=>b.classList.remove('selected'));
+      btn.classList.add('selected'); renderPreview(gatherForm());
+    });
+  });
+  document.querySelectorAll('#deliveryRadios .radio-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('#deliveryRadios .radio-btn').forEach(b=>b.classList.remove('selected'));
+      btn.classList.add('selected'); renderPreview(gatherForm());
+    });
+  });
+
+  document.querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('input', ()=> { try{ renderPreview(gatherForm()); }catch(e){} });
+  });
+
+  document.getElementById('reloadBtn').addEventListener('click', loadSettings);
+  document.getElementById('saveBtn').addEventListener('click', saveSettings);
+
+  window.addEventListener('barnwell:adminSettingsSaved', (ev)=>{ if(ev?.detail) populateForm(ev.detail); });
+
+  // Initial state + load
+  showMode('collection');
+  setStoreMode('open');
+  loadSettings();
+
+  // handy globals
+  window.__barnwell_admin_reload = loadSettings;
+  window.__barnwell_admin_save = saveSettings;
+})();
+</script>
+</body>
+</html>
