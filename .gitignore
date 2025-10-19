@@ -9,3 +9,4 @@ build/
 .env
 .env.local
 /.cache
+barnwell-proxy/.npm-cache/
