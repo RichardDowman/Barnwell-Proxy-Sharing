@@ -48,6 +48,7 @@ async function geocodeWithGoogle(addr){const url='https://maps.googleapis.com/ma
 async function geocodeWithPostcodesIo(pc){try{const r=await fetch('https://api.postcodes.io/postcodes/'+encodeURIComponent(pc));return await r.json().catch(()=>null);}catch(_){return null;}}
 function buildReceipt(payload){const width=63,dash='-'.repeat(width);const items=Array.isArray(payload.items)?payload.items:[];const fee=clamp(Number(payload.delivery_fee_pence||0),0,10_000_000);const meta=payload.meta||{},customer=meta.customer||{};const fulfil=(meta.fulfilment||'collection').toLowerCase();const sch=meta.scheduled_at?new Date(meta.scheduled_at):null;let dateStr='ASAP';if(sch&&!isNaN(sch)){const d=sch.getDate(),m=sch.toLocaleString('default',{month:'short'});const hh=String(sch.getHours()).padStart(2,'0'),mm=String(sch.getMinutes()).padStart(2,'0');let ord='th';if(![11,12,13].includes(d%100)){if(d%10===1)ord='st';else if(d%10===2)ord='nd';else if(d%10===3)ord='rd';}dateStr=`${d}${ord} ${m} @ ${hh}:${mm}`;}const lines=[];lines.push('                             ORDER');lines.push(`ORDER TYPE = ${fulfil.toUpperCase()}`);lines.push(`ORDER DATE = ${dateStr}`);lines.push('');lines.push(`Name: ${customer.name||''}`);lines.push(`Phone: ${customer.phone||''}`);if(fulfil==='delivery'&&meta.address)lines.push(`Address: ${meta.address}`);lines.push('');lines.push(dash);for(const it of items){const qty=Number(it.quantity||1)||1;const unit=Number(it.unit_pence||0)||0;const total=qty*unit;const name=String(it.name||'Item');theTitle=qty>1?`${name} (+${qty-1})`:name;const price=money(total);const left=width-price.length;const title=theTitle.length>left?theTitle.slice(0,left):theTitle;lines.push(title.padEnd(left,' ')+price);if(Array.isArray(it.groups)){for(const g of it.groups){if(!g||!g.name)continue;const vals=Array.isArray(g.values)?g.values.filter(Boolean):[];if(!vals.length)continue;lines.push(`${g.name}: ${vals.join(', ')}`);}}lines.push(dash);}const subtotal=items.reduce((s,it)=>s+(Number(it.unit_pence||0)*(Number(it.quantity||1)||1)),0);const total=subtotal+fee;const tot=(label,amt)=>{const lbl=label.toUpperCase()+':';const amtTxt=money(amt);const space=width-lbl.length-amtTxt.length;return lbl+(space>0?' '.repeat(space):' ')+amtTxt;};lines.push(tot('SUBTOTAL',subtotal));lines.push(tot('DELIVERY FEE',fee));lines.push(tot('TOTAL',total));lines.push('');return lines.join('\n');}
 function contactKeyFrom(phone,email){const norm=normalizePhoneUK(phone||'');const val=norm||String(email||'').trim().toLowerCase();if(!val)return null;return crypto.createHash('sha256').update(val).digest('hex');}
+function getSampleDebugOrder(){return{items:[{name:'Test Burger',quantity:1,unit_pence:950,groups:[{name:'TOPPINGS',values:['Lettuce','Tomato','Cheese']}]},{name:'Chips',quantity:2,unit_pence:250}],delivery_fee_pence:200,meta:{fulfilment:'delivery',customer:{name:'Test Customer',phone:'+447700900000'},address:'123 Test Street, Test Town, TE1 2ST',scheduled_at:null}};}
 
 /* EXPRESS */
 const app=express();app.use(cors);
@@ -183,15 +184,14 @@ app.get('/api/debug/print-status',(req,res)=>{setCors(req,res);if(!checkAdmin(re
   const queueJobs=listTxt(QUEUE_DIR);
   const doneJobs=listTxt(DONE_DIR).slice(-10);
   const lastCallback=fs.existsSync(path.join(PRINTER_DIR,'last-callback.json'))?readJSON(path.join(PRINTER_DIR,'last-callback.json'),null):null;
-  const queueList=queueJobs.map(j=>({file:j.f,path:j.p,modified:new Date(j.m).toISOString(),preview:fs.readFileSync(j.p,'utf8').slice(0,200)}));
+  const queueList=queueJobs.map(j=>{try{return{file:j.f,path:j.p,modified:new Date(j.m).toISOString(),preview:fs.readFileSync(j.p,'utf8').slice(0,200)};}catch{return{file:j.f,path:j.p,modified:new Date(j.m).toISOString(),preview:'(error reading file)'};}});
   const doneList=doneJobs.map(j=>({file:j.f,modified:new Date(j.m).toISOString()}));
   res.json({ok:true,queue:{count:queueJobs.length,jobs:queueList},done:{count:doneJobs.length,recentJobs:doneList},lastCallback,printerToken:PRINTER_TOKEN?'***set***':'not_set',timestamp:nowISO()});
 }catch(e){res.status(500).json({ok:false,error:String(e&&e.message||e)});}});
 
 /* Debug endpoint: test print with sample data */
 app.post('/api/debug/print-test',(req,res)=>{setCors(req,res);if(!checkAdmin(req,res))return;try{
-  const sampleOrder={items:[{name:'Test Burger',quantity:1,unit_pence:950,groups:[{name:'TOPPINGS',values:['Lettuce','Tomato','Cheese']}]},{name:'Chips',quantity:2,unit_pence:250}],delivery_fee_pence:200,meta:{fulfilment:'delivery',customer:{name:'Test Customer',phone:'+447700900000'},address:'123 Test Street, Test Town, TE1 2ST',scheduled_at:null}};
-  const customOrder=req.body&&Object.keys(req.body).length>0?req.body:sampleOrder;
+  const customOrder=req.body&&Object.keys(req.body).length>0?req.body:getSampleDebugOrder();
   const receipt=buildReceipt(customOrder);
   const id=enqueueTicket(receipt,{source:'debug-test',timestamp:nowISO()});
   res.json({ok:true,jobId:id,receipt,payload:customOrder,message:'Test print job enqueued successfully'});
