@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Delivery Zones Admin (Map-first)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#f5f7fb; --panel:#ffffff; --muted:#6b7280; --text:#0f172a; --brand:#2563eb;
+      --card-shadow: 0 6px 18px rgba(16,24,40,0.06); --radius:12px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;background:var(--bg);color:var(--text)}
+    header{height:64px;background:var(--panel);display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid rgba(15,23,42,0.04);position:sticky;top:0;z-index:60}
+    .brand{display:flex;align-items:center;gap:12px;font-weight:700}
+    .dot{width:10px;height:10px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 4px rgba(37,99,235,0.06)}
+    .header-actions{display:flex;align-items:center;gap:8px}
+    .icon-btn{background:#fff;border:1px solid rgba(15,23,42,0.04);padding:8px;border-radius:8px;cursor:pointer;box-shadow:var(--card-shadow)}
+    .btn{ background:linear-gradient(180deg,#3b82f6,#2563eb); color:white; border:none; padding:10px 12px; border-radius:10px; cursor:pointer; font-weight:700 }
+    .btn.ghost{ background:transparent; color:var(--text); border:1px solid rgba(15,23,42,0.06) }
+    .btn.secondary{ background:#eef2ff; color:var(--brand); border:1px solid rgba(37,99,235,0.08) }
+    main{display:block}
+    .map-section{ position:relative; min-height:calc(100vh - 64px); height: calc(100vh - 64px); overflow:hidden; background:#e8eef6 }
+    #map{ width:100%; height:100%; display:block; }
+    .map-loading{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.85); z-index:140; font-weight:700; color:var(--muted) }
+    .map-control{ position:absolute; right:12px; top:12px; z-index:220; display:flex; gap:8px }
+    .map-control .control{ background:#fff;padding:8px;border-radius:10px;border:1px solid rgba(15,23,42,0.04); box-shadow:var(--card-shadow) }
+    .modal-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,0.45); display:none; align-items:center; justify-content:center; z-index:400 }
+    .modal-backdrop.visible{ display:flex }
+    .modal{ width:100%; max-width:520px; background:white; border-radius:12px; padding:16px; box-shadow:0 12px 30px rgba(2,6,23,0.12) }
+    .modal .row{ display:flex; gap:8px; align-items:center; margin-top:8px }
+    .modal label{ font-size:.85rem; color:var(--muted); display:block; margin-bottom:6px }
+    .modal input[type="text"], .modal input[type="number"]{ width:100%; padding:10px 12px; border-radius:8px; border:1px solid rgba(15,23,42,0.06) }
+    .content{ padding:18px; max-width:1100px; margin:0 auto }
+    .card{ background:var(--panel); border-radius:12px; padding:12px; box-shadow:var(--card-shadow); margin-bottom:12px; border:1px solid rgba(15,23,42,0.03) }
+    .zones-list .zone{ display:flex; justify-content:space-between; align-items:center; padding:12px; border-radius:10px; border:1px solid rgba(15,23,42,0.04); margin-bottom:8px; background:#fff }
+    .zone .meta{ font-size:.9rem; color:var(--muted) }
+    .quick-tools{ display:flex; gap:8px; justify-content:center; align-items:center }
+    .color-dot{ display:inline-block; width:12px; height:12px; border-radius:6px; margin-right:8px; vertical-align:middle; box-shadow:0 1px 2px rgba(0,0,0,0.08); border:1px solid rgba(0,0,0,0.06) }
+    .hint{ font-size:.85rem; color:var(--muted) }
+    .toast{ position:fixed; right:18px; bottom:18px; display:flex; flex-direction:column; gap:8px; z-index:600 }
+    .toast .item{ background:#111827; color:white; padding:8px 12px; border-radius:10px; box-shadow:var(--card-shadow) }
+    .notice{ background:#fff3cd; color:#856404; border:1px solid #ffeeba; padding:10px; border-radius:8px; margin-bottom:12px }
+    @media (max-width:980px){ .map-section{ min-height:calc(60vh); height:calc(60vh) } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="dot"></span>Delivery Zones Admin</div>
+    <div class="header-actions">
+      <button id="setTokenBtn" class="btn secondary" title="Set or change the admin token">Set Admin Token</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="map-section" id="mapSection">
+      <div id="map"></div>
+      <div id="mapLoading" class="map-loading" style="display:none">Loading map…</div>
+      <div class="map-control">
+        <div class="control">
+          <button id="clearSelection" class="btn ghost">Clear</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="content">
+      <div id="configNotice" class="notice" style="display:none"></div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-weight:800">Zones</div>
+            <div class="hint">Scroll here to view, edit or delete saved zones</div>
+          </div>
+          <div><button id="createNewBtn" class="btn">Create new zone (map)</button></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:8px">Existing Zones</div>
+        <div id="zonesList" class="zones-list"></div>
+      </div>
+
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:8px">Quick tools</div>
+        <div class="quick-tools">
+          <button id="centerStore" class="btn">Center store</button>
+          <button id="reloadZones" class="btn">Refresh zones</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="saveModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:800" id="modalTitle">Save zone</div>
+        <div class="hint" id="modalHint">Enter name & price for the drawn polygon</div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <div style="flex:1">
+          <label>Zone name</label>
+          <input id="modalZoneName" type="text" placeholder="e.g. Zone 1" />
+        </div>
+        <div style="width:160px">
+          <label>Price (£)</label>
+          <input id="modalZonePrice" type="number" step="0.01" min="0" placeholder="2.50" />
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button id="modalBack" class="btn ghost">Back</button>
+        <button id="modalSave" class="btn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+  // ===== CONFIG =====
+  // Use your new HTTPS API by default; still allow a manual override via localStorage.
+  const PROXY_BASE =
+    (localStorage.getItem('delivery_proxy_base_override') || '').trim() ||
+    "https://api.barnwellpizzandgrill.co.uk";
+
+  const STORE_ADDRESS = "32a Barnwell Workshops, Barnwell, Peterborough PE8 5PL";
+  const COLOR_PALETTE = ['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#06b6d4','#f97316','#6366f1','#14b8a6'];
+
+  const store = {
+    get storeLat(){ return localStorage.getItem('store_lat') || ''; }, set storeLat(v){ localStorage.setItem('store_lat', v || ''); },
+    get storeLng(){ return localStorage.getItem('store_lng') || ''; }, set storeLng(v){ localStorage.setItem('store_lng', v || ''); },
+    get zoneColors(){ try{ return JSON.parse(localStorage.getItem('zone_colors') || '{}') || {}; }catch(e){ return {}; } },
+    set zoneColors(obj){ try{ localStorage.setItem('zone_colors', JSON.stringify(obj || {})); }catch(e){} },
+  };
+
+  const refs = {
+    map: document.getElementById('map'),
+    mapSection: document.getElementById('mapSection'),
+    mapLoading: document.getElementById('mapLoading'),
+    clearSelection: document.getElementById('clearSelection'),
+    createNewBtn: document.getElementById('createNewBtn'),
+    centerStore: document.getElementById('centerStore'),
+    reloadZones: document.getElementById('reloadZones'),
+    zonesList: document.getElementById('zonesList'),
+    toast: document.getElementById('toast'),
+    saveModalBackdrop: document.getElementById('saveModalBackdrop'),
+    modalZoneName: document.getElementById('modalZoneName'),
+    modalZonePrice: document.getElementById('modalZonePrice'),
+    modalSave: document.getElementById('modalSave'),
+    modalBack: document.getElementById('modalBack'),
+    modalHint: document.getElementById('modalHint'),
+    configNotice: document.getElementById('configNotice'),
+    setTokenBtn: document.getElementById('setTokenBtn'),
+  };
+
+  function toast(msg, ms=2600){
+    const item = document.createElement('div'); item.className='item'; item.textContent = msg; refs.toast.appendChild(item);
+    setTimeout(()=> item.remove(), ms);
+  }
+
+  let map = null, drawingManager = null, selectedPolygon = null;
+  let zones = [];
+  const polygonsById = new Map();
+  const allPolygons = new Set();
+  let editingZoneId = null;
+
+  function getZoneColor(id){
+    if(!id) return COLOR_PALETTE[0];
+    const mapColors = store.zoneColors;
+    if(mapColors[id]) return mapColors[id];
+    const used = new Set(Object.values(mapColors));
+    let pick = COLOR_PALETTE.find(c => !used.has(c)) || COLOR_PALETTE[Object.keys(mapColors).length % COLOR_PALETTE.length];
+    mapColors[id] = pick; store.zoneColors = mapColors; return pick;
+  }
+  function pickUnusedColor(){
+    const used = new Set(Object.values(store.zoneColors));
+    for(const c of COLOR_PALETTE) if(!used.has(c)) return c;
+    return COLOR_PALETTE[Object.keys(store.zoneColors).length % COLOR_PALETTE.length];
+  }
+  function escapeHtml(str){ return String(str||'').replace(/[&<>"']/g, s=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+  function parseGBPtoPence(v){ const n=Number(v); if(!isFinite(n) || n<0) return NaN; return Math.round(n*100); }
+
+  // ===== Admin token helper (no hardcoded secret in HTML) =====
+  function getAdminToken(){ return localStorage.getItem('testing_admin_token') || ''; }
+  function requireAdminToken(){
+    let tok = getAdminToken();
+    if(!tok){
+      tok = (prompt('Enter admin token to manage zones (stored locally):', '') || '').trim();
+      if(tok){ localStorage.setItem('testing_admin_token', tok); toast('Admin token saved'); }
+      else toast('No token set — only public endpoints will work');
+    }
+    return tok;
+  }
+  refs.setTokenBtn.addEventListener('click', ()=>{
+    const cur = getAdminToken();
+    const next = (prompt('Set/Change admin token:', cur) || '').trim();
+    if(next){ localStorage.setItem('testing_admin_token', next); toast('Admin token updated'); }
+    else { localStorage.removeItem('testing_admin_token'); toast('Admin token cleared'); }
+  });
+
+  // ===== Robust API helper (tries PROXY_BASE first) =====
+  async function api(path, options = {}, { timeout = 12000 } = {}) {
+    const relPath = path.startsWith('/') ? path : '/' + path;
+    const base = (typeof PROXY_BASE === 'string' && PROXY_BASE.trim()) ? PROXY_BASE.replace(/\/+$/,'') : '';
+    const headers = Object.assign({}, options.headers || {});
+    if(options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+    if(!headers['Accept']) headers['Accept'] = 'application/json';
+    headers['ngrok-skip-browser-warning'] = '1';
+    const tok = getAdminToken();
+    if(tok) headers['x-admin-token'] = tok;
+
+    const fetchOptions = Object.assign({}, options, {
+      headers,
+      // help avoid SW caching/stale responses
+      cache: 'no-store',
+      credentials: 'omit'
+    });
+
+    const doFetch = (url) => new Promise((resolve, reject) => {
+      const ac = new AbortController(); const id = setTimeout(() => ac.abort(), timeout);
+      fetch(url, Object.assign({}, fetchOptions, { signal: ac.signal, mode: 'cors', redirect: 'follow' }))
+        .then(async (res) => {
+          clearTimeout(id);
+          if(!res.ok){
+            const txt = await res.text().catch(()=>res.statusText || '');
+            return reject(new Error(`${url} failed ${res.status}: ${txt}`));
+          }
+          const txt = await res.text().catch(()=>null);
+          if(!txt) return resolve(null);
+          try { return resolve(JSON.parse(txt)); } catch{ return resolve(txt); }
+        })
+        .catch((err) => { clearTimeout(id); reject(err); });
+    });
+
+    // try API base
+    if(base){
+      try { return await doFetch(base + relPath); }
+      catch (err){ console.warn('[api] proxy fetch failed, will attempt direct fetch:', err); }
+    }
+    // fallback to relative (usually 404 on GoodBarber host, but harmless)
+    return await doFetch(relPath);
+  }
+
+  // ===== Notices + health check =====
+  (function checkConfig(){
+    refs.configNotice.style.display = 'block';
+    refs.configNotice.innerHTML = [
+      '<strong>API Base:</strong> ', escapeHtml(PROXY_BASE),
+      ' — If you need to override: <code>localStorage.setItem("delivery_proxy_base_override","https://your-url")</code> then reload.'
+    ].join('');
+    // ping /health once so we fail fast with a clear message
+    api('/health', { method:'GET' })
+      .then(()=>{ refs.configNotice.style.display='none'; })
+      .catch(e=>{
+        refs.configNotice.style.display='block';
+        refs.configNotice.innerHTML =
+          '<strong>API not reachable:</strong> ' + escapeHtml(PROXY_BASE) +
+          '<br/>' + escapeHtml(e && e.message ? e.message : String(e)) +
+          '<br/>Check DNS, SSL, firewall, and that your Node service is running.';
+      });
+  })();
+
+  (async function init(){
+    if(!getAdminToken()){
+      // ask once on first run to avoid 401/404 noise on admin endpoints
+      requireAdminToken();
+    }
+    await refreshZones().catch((e)=>{
+      console.warn('initial refreshZones failed', e);
+      toast('Initial zone load failed: ' + (e && e.message ? e.message : String(e)));
+    });
+  })();
+
+  // ===== Google Maps & drawing =====
+  function initMap(){
+    try{
+      if(map) return;
+      const defaultCenter = { lat: 52.2053, lng: 0.1218 };
+      map = new google.maps.Map(refs.map, {
+        center: defaultCenter, zoom: 13, mapTypeControl:false, streetViewControl:false, fullscreenControl:true,
+        styles: [{ featureType:"poi", stylers:[{visibility:"off"}] }]
+      });
+
+      drawingManager = new google.maps.drawing.DrawingManager({
+        drawingMode: null, drawingControl: false,
+        polygonOptions: { editable:true, fillOpacity:0.15, strokeOpacity:1, strokeWeight:2 }
+      });
+      drawingManager.setMap(map);
+
+      google.maps.event.addListener(drawingManager, 'overlaycomplete', function(e){
+        if(e.type === google.maps.drawing.OverlayType.POLYGON){
+          if(selectedPolygon) selectedPolygon.setMap(null);
+          selectedPolygon = e.overlay;
+          const color = pickUnusedColor();
+          try { selectedPolygon.setOptions({ fillColor:color, strokeColor:color, fillOpacity:0.15, strokeWeight:2 }); selectedPolygon._tempColor = color; } catch{}
+          selectedPolygon.setEditable(true);
+          attachPolygonEvents(selectedPolygon);
+          allPolygons.add(selectedPolygon);
+          editingZoneId = null;
+          showSaveModal('New zone — enter name & price');
+        }
+      });
+
+      if(zones.length) drawZonesOnMap();
+    }catch(e){
+      console.error('initMap error', e);
+      toast('Map initialization failed');
+    }
+  }
+  window.initMap = initMap;
+
+  function attachPolygonEvents(poly){ try{ poly.addListener('click', ()=> selectPolygon(poly)); }catch(e){ console.warn('attachPolygonEvents failed', e); } }
+
+  function selectPolygon(poly){
+    selectedPolygon = poly;
+    polygonsById.forEach(p=>p.setEditable(false));
+    poly.setEditable(true);
+    editingZoneId = null;
+    let resolvedColor = null;
+    for(const [id,p] of polygonsById.entries()){
+      if(p === poly){
+        editingZoneId = id;
+        const z = zones.find(z=>z.id===id);
+        if(z){
+          refs.modalZoneName.value = z.name || '';
+          refs.modalZonePrice.value = (Number(z.price_pence||0)/100).toFixed(2);
+        }
+        try { resolvedColor = getZoneColor(id); } catch{}
+        break;
+      }
+    }
+    if(!resolvedColor) resolvedColor = poly._tempColor || pickUnusedColor();
+    try{ poly.setOptions({ fillColor: resolvedColor, strokeColor: resolvedColor, fillOpacity: 0.15, strokeWeight: 2 }); }catch{}
+    showSaveModal(editingZoneId ? 'Edit zone — change details or Save' : 'New zone — enter name & price');
+    try{
+      const bounds = new google.maps.LatLngBounds();
+      poly.getPath().forEach(pt=>bounds.extend(pt));
+      map.fitBounds(bounds, 40);
+    }catch{}
+  }
+
+  function ringFromPolygon(poly){
+    const path = poly.getPath(); const arr = [];
+    for(let i=0;i<path.getLength();i++){ const p = path.getAt(i); arr.push([p.lng(), p.lat()]); }
+    if(arr.length && (arr[0][0] !== arr[arr.length-1][0] || arr[0][1] !== arr[arr.length-1][1])) arr.push([arr[0][0], arr[0][1]]);
+    return arr;
+  }
+  function polygonFromRing(ring){ return ring.map(([lng,lat]) => new google.maps.LatLng(lat,lng)); }
+  function normalizeRing(r){ if(!Array.isArray(r)) return []; if(r.length > 1){ const n=r.length; if(Math.abs(r[0][0]-r[n-1][0])<1e-9 && Math.abs(r[0][1]-r[n-1][1])<1e-9){ return r.slice(0,n-1); } } return r.slice(); }
+  function ringsEquivalent(a,b){
+    a = normalizeRing(a||[]); b = normalizeRing(b||[]);
+    if(a.length !== b.length) return false; const n=a.length; if(n===0) return false;
+    const fmt = arr => arr.map(p => (Number(p[0]).toFixed(6)+','+Number(p[1]).toFixed(6)));
+    const af = fmt(a), bf = fmt(b);
+    for(let s=0;s<n;s++){
+      let ok=true; for(let i=0;i<n;i++){ if(af[i]!==bf[(i+s)%n]){ ok=false; break; } } if(ok) return true;
+      ok=true; for(let i=0;i<n;i++){ if(af[i]!==bf[(s-i+n)%n]){ ok=false; break; } } if(ok) return true;
+    }
+    return false;
+  }
+
+  async function refreshZones(){
+    try{
+      refs.configNotice.style.display = 'none';
+      refs.mapLoading.style.display = 'flex';
+      const data = await api('/api/zonesAdminV2?activeOnly=false', { method:'GET' }).catch(async (err)=>{
+        console.warn('primary zonesAdminV2 fetch failed, trying fallback endpoints', err && err.message);
+        const fallbacks = ['/api/zonesAdminV2?activeOnly=true','/api/zones','/api/zonesPublic?activeOnly=true'];
+        for(const fb of fallbacks){
+          try{
+            const resp = await api(fb, { method:'GET' });
+            if(resp && (Array.isArray(resp.zones) || Array.isArray(resp))) return resp;
+          }catch(e){ console.warn('fallback', fb, 'failed', e); }
+        }
+        throw err;
+      });
+      zones = (data && (Array.isArray(data.zones) ? data.zones : (Array.isArray(data) ? data : (data.zones || [])))) || [];
+      zones.forEach(z => { if(z && z.id) getZoneColor(z.id); });
+      renderZonesList(zones.filter(z=>z.active !== false));
+      if(window.google && window.google.maps && map) drawZonesOnMap();
+      refs.mapLoading.style.display = 'none';
+      toast('Zones refreshed');
+    }catch(e){
+      console.error('refreshZones', e);
+      refs.mapLoading.style.display = 'none';
+      refs.configNotice.style.display = 'block';
+      refs.configNotice.innerHTML = [
+        '<strong>Could not load zones:</strong> ',
+        escapeHtml(String(e && e.message ? e.message : e)),
+        '<br/>Check PROXY_BASE, token, and network.'
+      ].join('');
+      toast('Could not load zones: ' + (e && e.message ? e.message : String(e)));
+    }
+  }
+
+  function drawZonesOnMap(){
+    if(!window.google || !window.google.maps || !map) return;
+    polygonsById.forEach(p=> { try{ p.setMap(null); }catch{} });
+    polygonsById.clear();
+    zones.forEach(z=>{
+      if(z.active === false) return;
+      const ring = z?.polygon?.coordinates?.[0] || z.ring || z.coordinates || null;
+      if(Array.isArray(ring) && ring.length >= 3){
+        const color = getZoneColor(z.id);
+        const poly = new google.maps.Polygon({ paths: polygonFromRing(ring), editable:false, map, fillColor:color, fillOpacity:0.15, strokeColor:color, strokeWeight:2 });
+        polygonsById.set(z.id, poly);
+        allPolygons.add(poly);
+        poly.addListener('click', ()=> selectPolygon(poly));
+      }
+    });
+  }
+
+  function renderZonesList(list){
+    refs.zonesList.innerHTML = (list || []).map(z=>{
+      const price = (Number(z.price_pence||0)/100).toFixed(2);
+      const color = getZoneColor(z.id);
+      return `<div class="zone" data-id="${z.id}">
+        <div>
+          <span class="color-dot" style="background:${color}"></span>
+          <span style="font-weight:800">${escapeHtml(z.name) || '(untitled)'}</span>
+          <div class="meta">Price: £${price}</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" data-action="edit">Edit</button>
+          <button class="btn" data-action="delete">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    refs.zonesList.querySelectorAll('.zone').forEach(el=>{
+      const id = el.dataset.id;
+      el.querySelector('[data-action="edit"]').addEventListener('click', async ()=>{
+        const z = zones.find(z=>z.id===id); if(!z) return;
+        if(!map){ toast('Map not ready — wait a moment and try again'); return; }
+        let poly = polygonsById.get(id);
+        if(!poly){
+          const ring = z?.polygon?.coordinates?.[0] || z.ring || z.coordinates || null;
+          if(Array.isArray(ring)){
+            const color = getZoneColor(id);
+            poly = new google.maps.Polygon({ paths: polygonFromRing(ring), map, fillColor:color, fillOpacity:0.15, strokeColor:color, strokeWeight:2 });
+            polygonsById.set(id, poly);
+            allPolygons.add(poly);
+          }
+        }
+        if(poly) selectPolygon(poly);
+      });
+
+      el.querySelector('[data-action="delete"]').addEventListener('click', async ()=>{
+        if(!confirm('Delete this zone? It will be removed on the server.')) return;
+        try{
+          const z = zones.find(z=>z.id===id);
+          const ring = z?.polygon?.coordinates?.[0] || null;
+          await api(`/api/zonesAdminV2?id=${encodeURIComponent(id)}`, { method:'DELETE' });
+          if(polygonsById.has(id)){ try{ polygonsById.get(id).setMap(null); }catch{} allPolygons.delete(polygonsById.get(id)); polygonsById.delete(id); }
+          if(ring){
+            for(const poly of Array.from(allPolygons)){
+              try{
+                const polyRing = ringFromPolygon(poly);
+                if(ringsEquivalent(polyRing, ring)){
+                  try{ poly.setMap(null); }catch{}
+                  allPolygons.delete(poly);
+                  for(const [pid,pv] of Array.from(polygonsById.entries())){ if(pv === poly) polygonsById.delete(pid); }
+                }
+              }catch{}
+            }
+            if(selectedPolygon){
+              try{
+                const selRing = ringFromPolygon(selectedPolygon);
+                if(ringsEquivalent(selRing, ring)){ try{ selectedPolygon.setMap(null); }catch{} allPolygons.delete(selectedPolygon); selectedPolygon = null; }
+              }catch{}
+            }
+          }
+          zones = zones.filter(z=> z.id !== id);
+          renderZonesList(zones.filter(z => z.active !== false));
+          if(window.google && window.google.maps && map) drawZonesOnMap();
+          toast('Zone deleted');
+        }catch(e){
+          console.error('delete', e);
+          toast('Delete failed: ' + (e.message || ''));
+        }
+      });
+    });
+  }
+
+  function showSaveModal(hint){ refs.modalHint.textContent = hint || ''; refs.saveModalBackdrop.classList.add('visible'); refs.saveModalBackdrop.setAttribute('aria-hidden','false'); setTimeout(()=> refs.modalZoneName.focus(), 120); }
+  function hideSaveModal(){ refs.saveModalBackdrop.classList.remove('visible'); refs.saveModalBackdrop.setAttribute('aria-hidden','true'); refs.modalZoneName.value = ''; refs.modalZonePrice.value = ''; editingZoneId = null; }
+
+  refs.modalBack.addEventListener('click', ()=>{
+    if(selectedPolygon && !editingZoneId){ try{ selectedPolygon.setMap(null); }catch{} allPolygons.delete(selectedPolygon); selectedPolygon = null; }
+    else if(selectedPolygon && editingZoneId){ selectedPolygon.setEditable(false); }
+    hideSaveModal();
+    if(drawingManager && window.google) drawingManager.setDrawingMode(null);
+  });
+
+  refs.modalSave.addEventListener('click', async ()=>{
+    const name = refs.modalZoneName.value.trim();
+    const price = refs.modalZonePrice.value;
+    if(!name){ toast('Name required'); return; }
+    const price_pence = parseGBPtoPence(price);
+    if(!isFinite(price_pence)){ toast('Enter a valid price'); return; }
+
+    let polygonCoords = null;
+    if(selectedPolygon) polygonCoords = ringFromPolygon(selectedPolygon);
+    else if(editingZoneId){ const existing = zones.find(z=>z.id===editingZoneId); polygonCoords = existing?.polygon?.coordinates?.[0] || null; }
+    else return toast('No polygon to save');
+
+    const payload = { id: editingZoneId || null, name, price_pence, active: true, polygon: polygonCoords ? { type:'Polygon', coordinates:[polygonCoords] } : undefined };
+
+    try{
+      await api('/api/zonesAdminV2', { method:'POST', body: JSON.stringify(payload) });
+      toast(editingZoneId ? 'Zone updated' : 'Zone created');
+      if(selectedPolygon){ try{ selectedPolygon.setEditable(false); }catch{} }
+      selectedPolygon = null;
+      if(drawingManager && window.google) drawingManager.setDrawingMode(null);
+      hideSaveModal();
+      await refreshZones();
+      document.querySelector('.content').scrollIntoView({ behavior:'smooth' });
+    }catch(e){
+      console.error('save zone', e);
+      refs.configNotice.style.display = 'block';
+      refs.configNotice.innerHTML = '<strong>Save failed</strong> ' + escapeHtml(e && e.message ? e.message : e) + ' — check API reachability and admin token.';
+      toast('Save failed: ' + (e.message || ''));
+    }
+  });
+
+  refs.clearSelection.addEventListener('click', ()=>{
+    if(selectedPolygon){ try{ selectedPolygon.setMap(null); }catch{} selectedPolygon = null; }
+    if(drawingManager && window.google) drawingManager.setDrawingMode(null);
+    toast('Selection cleared');
+  });
+
+  refs.createNewBtn.addEventListener('click', async ()=>{
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if(!drawingManager){ toast('Map not ready — please wait or ensure Google Maps key is provided'); return; }
+    drawingManager.setDrawingMode(google.maps.drawing.OverlayType.POLYGON);
+    toast('Drawing enabled — create a polygon on the map');
+  });
+
+  refs.centerStore.addEventListener('click', async ()=>{
+    try{
+      if(!map){ toast('Map not ready — please wait'); return; }
+      if(store.storeLat && store.storeLng){ map.setCenter({ lat: parseFloat(store.storeLat), lng: parseFloat(store.storeLng) }); map.setZoom(14); return; }
+      const geocoder = new google.maps.Geocoder();
+      geocoder.geocode({ address: STORE_ADDRESS }, (results,status)=>{
+        if(status === 'OK' && results && results[0]){
+          const loc = results[0].geometry.location;
+          store.storeLat = String(loc.lat()); store.storeLng = String(loc.lng());
+          map.setCenter({ lat: loc.lat(), lng: loc.lng() });
+          map.setZoom(14);
+        } else toast('Could not geocode store');
+      });
+    }catch(e){ toast('Center failed'); }
+  });
+
+  refs.reloadZones.addEventListener('click', ()=> refreshZones());
+  window.ADMIN_ZONES = { refreshZones, initMap, getZoneColor };
+  </script>
+
+  <!-- Google Maps JS API (Drawing library still works now; plan to migrate before May 2026) -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD7CNP-iX7k0_yLW7FNkXR8Om_9ruY8PHo&libraries=drawing&v=weekly&callback=initMap" async defer></script>
+</body>
+</html>
