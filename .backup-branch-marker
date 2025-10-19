@@ -1,0 +1,11 @@
+# Backup Branch Marker
+
+This branch is a backup snapshot created on 2025-10-19.
+
+- **Purpose**: Preserve original state before npm cache cleanup
+- **Base Commit**: fe54b25 (Store management upload)
+- **Branch**: backup/original-before-npm-cache-cleanup-20251019
+- **Created**: 2025-10-19T18:45:25Z
+
+This is a non-destructive backup. Do not modify this branch.
+For cleanup work, see the copilot/backuporiginal-before-npm-cache-cleanup branch.
