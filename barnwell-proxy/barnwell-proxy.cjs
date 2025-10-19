@@ -184,7 +184,7 @@ app.get('/api/debug/print-status',(req,res)=>{setCors(req,res);if(!checkAdmin(re
   const queueJobs=listTxt(QUEUE_DIR);
   const doneJobs=listTxt(DONE_DIR).slice(-10);
   const lastCallback=fs.existsSync(path.join(PRINTER_DIR,'last-callback.json'))?readJSON(path.join(PRINTER_DIR,'last-callback.json'),null):null;
-  const queueList=queueJobs.map(j=>{try{return{file:j.f,path:j.p,modified:new Date(j.m).toISOString(),preview:fs.readFileSync(j.p,'utf8').slice(0,200)};}catch{return{file:j.f,path:j.p,modified:new Date(j.m).toISOString(),preview:'(error reading file)'};}});
+  const queueList=queueJobs.map(j=>{try{return{file:j.f,modified:new Date(j.m).toISOString(),preview:fs.readFileSync(j.p,'utf8').slice(0,200)};}catch{return{file:j.f,modified:new Date(j.m).toISOString(),preview:'(error reading file)'};}});
   const doneList=doneJobs.map(j=>({file:j.f,modified:new Date(j.m).toISOString()}));
   res.json({ok:true,queue:{count:queueJobs.length,jobs:queueList},done:{count:doneJobs.length,recentJobs:doneList},lastCallback,printerToken:PRINTER_TOKEN?'***set***':'not_set',timestamp:nowISO()});
 }catch(e){res.status(500).json({ok:false,error:String(e&&e.message||e)});}});
