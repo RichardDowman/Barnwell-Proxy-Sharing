@@ -1,0 +1,28 @@
+# CloudPRNT app lives on 127.0.0.1:8091. These rules do NOT affect your other endpoints.
+# 1) General CloudPRNT traffic (/cloudprnt/job/..., etc.)
+location ^~ /cloudprnt/ {
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+
+    proxy_set_header Host $host;
+    proxy_pass http://127.0.0.1:8091;
+}
+
+# 2) Star printers poll with POST; app expects GET. Force GET upstream and drop body.
+#    This avoids 404/405 when printer POSTs to /cloudprnt/poll
+location ^~ /cloudprnt/poll {
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+
+    proxy_set_header Host $host;
+    proxy_method GET;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_pass http://127.0.0.1:8091$request_uri;
+}

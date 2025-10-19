@@ -1,0 +1,175 @@
+import express from 'express';
+import fs from 'fs/promises';
+import path from 'path';
+import { nanoid } from 'nanoid';
+import iconv from 'iconv-lite';
+
+const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', true);
+app.use(express.json());
+
+const PORT        = Number(process.env.PORT || 8091);
+const DATA_DIR    = process.env.DATA_DIR || '/var/www/barnwell-proxy/data';
+const JOBS_DIR    = path.join(DATA_DIR, 'cloudprnt', 'jobs');
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.CLOUDPRNT_SECRET || '';
+
+async function ensureDir(p){ await fs.mkdir(p, { recursive: true }); }
+await ensureDir(JOBS_DIR);
+
+const list = async d => (await fs.readdir(d).catch(()=>[])).sort();
+const isQueued  = f => f.endsWith('.txt') && !f.startsWith('_sending_');
+const isSending = f => f.startsWith('_sending_') && f.endsWith('.txt');        // no MAC in the name anymore
+const sentFlag  = () => path.join(JOBS_DIR, '._sent.flag');                    // single flag per job in flight
+
+function money(p){ return `£${(p/100).toFixed(2)}`; }
+
+function render(job){
+  const lines = [];
+  const fulfil = (job?.meta?.fulfilment || 'collection');
+  lines.push(`New ${fulfil[0].toUpperCase()}${fulfil.slice(1)} Order`);
+  lines.push('ASAP');
+  lines.push('');
+  lines.push('---------------------------------------------------------------');
+
+  const items = Array.isArray(job?.items) ? job.items : [];
+  for (const it of items){
+    const qty  = Number(it.quantity || 1);
+    const name = `${it.name || ''}`.trim();
+    const line = name.padEnd(44,'.') + money((it.unit_pence||0)*qty).padStart(12);
+    lines.push(line);
+    if (Array.isArray(it.groups)){
+      for (const g of it.groups){
+        const n = `${g.name||''}`.trim();
+        const v = Array.isArray(g.values) ? g.values.join(', ') : '';
+        lines.push(`${n.toUpperCase()}: ${v}`);
+      }
+    }
+  }
+  lines.push('---------------------------------------------------------------');
+
+  const subtotal = items.reduce((s,i)=> s + (i.unit_pence||0)*Number(i.quantity||1), 0);
+  const dfee     = Number(job?.delivery_fee_pence||0);
+  const total    = subtotal + dfee;
+
+  lines.push(`SUBTOTAL:`.padEnd(44,' ') + money(subtotal).padStart(12));
+  lines.push(`DELIVERY FEE:`.padEnd(44,' ') + money(dfee).padStart(12));
+  lines.push(`TOTAL:`.padEnd(44,' ') + money(total).padStart(12));
+  lines.push('');
+  // strip any stray leading '?' from older versions
+  return lines.join('\n').replace(/^\?+\s*/, '');
+}
+
+async function writeTextJob(text){
+  const id = nanoid();
+  await fs.writeFile(path.join(JOBS_DIR, `${id}.txt`), text, 'utf8');
+  return { id, bytes: Buffer.byteLength(text, 'utf8') };
+}
+
+app.post('/cloudprnt/enqueue-local', async (req,res)=>{
+  if ((req.get('X-Admin-Token')||'') !== ADMIN_TOKEN) return res.status(401).json({ok:false,error:'unauthorized'});
+  try{
+    const text = render(req.body||{});
+    const out = await writeTextJob(text);
+    res.json({ ok:true, jobId: out.id, bytes: out.bytes });
+  }catch(e){ res.status(500).json({ ok:false, error:String(e?.message||e) }); }
+});
+
+// ---------- queue helpers (no MAC binding) ----------
+async function getSending(){
+  const f = (await list(JOBS_DIR)).find(isSending);
+  if (!f) return null;
+  return { name:f, full:path.join(JOBS_DIR,f), id:f.replace(/^_sending_/,'').replace(/\.txt$/,'') };
+}
+async function reserveAny(){
+  const f = (await list(JOBS_DIR)).find(isQueued);
+  if (!f) return null;
+  const sn = `_sending_${f}`;
+  await fs.rename(path.join(JOBS_DIR,f), path.join(JOBS_DIR,sn));
+  return { name:sn, full:path.join(JOBS_DIR,sn), id:f.replace(/\.txt$/,'') };
+}
+async function finalize(ok){
+  // clear sent flag either way
+  try{ await fs.unlink(sentFlag()); }catch{}
+  const cur = await getSending();
+  if (!cur) return 0;
+  if (ok){ try{ await fs.unlink(cur.full); }catch{}; return 1; }
+  const back = cur.name.replace(/^_sending_/,'');
+  try{ await fs.rename(cur.full, path.join(JOBS_DIR, back)); }catch{}
+  return 1;
+}
+async function sendingIsStale(maxMs=30000){
+  // if a job is “sending” but never confirmed, drop the lock after 30s
+  try{
+    const f = await getSending();
+    if (!f) return false;
+    const st = await fs.stat(f.full);
+    if (Date.now() - st.mtimeMs > maxMs){
+      const back = f.name.replace(/^_sending_/,'');
+      await fs.rename(f.full, path.join(JOBS_DIR, back));
+      try{ await fs.unlink(sentFlag()); }catch{}
+      return true;
+    }
+  }catch{}
+  return false;
+}
+
+// ---------- CloudPRNT endpoint ----------
+app.all('/cloudprnt/poll', async (req,res)=>{
+  const key = (req.query.key||'').toString();
+  if (!ADMIN_TOKEN || key !== ADMIN_TOKEN) return res.status(401).json({ok:false,error:'unauthorized'});
+
+  const type = (req.query.type||'').toString();
+  const code = (req.query.code||'').toString();
+
+  if (req.method === 'DELETE'){
+    const n = await finalize(code.startsWith('200'));
+    return res.json({ ok:true, deleted:n });
+  }
+
+  // allow any printer to fetch: text/plain OR application/octet-stream (or empty)
+  const isFetch = !type || type.startsWith('text/plain') || type === 'application/octet-stream';
+  if (isFetch){
+    await sendingIsStale(); // unlock if a stale lock exists
+
+    let cur = await getSending();
+    if (!cur) cur = await reserveAny();
+    if (!cur) return res.sendStatus(204);
+
+    // If we already produced bytes for this job, 204 until the printer sends DELETE
+    try{ await fs.access(sentFlag()); return res.sendStatus(204); } catch {}
+
+    const text = (await fs.readFile(cur.full, 'utf8')).replace(/^\?+\s*/, '');
+
+    // ESC/POS preamble: UK (ESC R 2) + Code page CP858 (ESC GS t 3) so £ = 0x9C
+    const pre  = Buffer.from([0x1b,0x52,0x02, 0x1b,0x1d,0x74,0x03]);
+    const body = iconv.encode(text, 'cp858');
+    const out  = Buffer.concat([pre, body]);
+
+    await fs.writeFile(sentFlag(), '1');
+    res.set('Content-Type','application/octet-stream');
+    return res.send(out);
+  }
+
+  // announce job presence + fetch/delete URLs
+  const files = await list(JOBS_DIR);
+  const hasJob = !!files.find(isSending) || !!files.find(isQueued);
+  if (!hasJob) return res.sendStatus(204);
+
+  const host = (req.get('x-forwarded-host') || req.get('host') || '127.0.0.1').toString();
+  const base = `http://${host}`;
+  return res.json({
+    jobReady: true,
+    mediaTypes: ['application/octet-stream'],
+    contentType: 'application/octet-stream',
+    jobFetchUrl:  `${base}/cloudprnt/poll?type=application%2Foctet-stream&key=${encodeURIComponent(key)}`,
+    deleteMethod: 'DELETE',
+    jobDeleteUrl: `${base}/cloudprnt/poll?code=200+OK&key=${encodeURIComponent(key)}`,
+    jobId: files.find(isSending)?.replace(/^_sending_/,'').replace(/\.txt$/,'')
+        || files.find(isQueued)?.replace(/\.txt$/,'')
+        || nanoid()
+  });
+});
+
+app.get('/cloudprnt/health', (_req,res)=> res.json({ok:true}));
+app.listen(PORT, ()=> console.log(`cloudprnt listening on :${PORT} jobs=${JOBS_DIR}`));

@@ -1,0 +1,52 @@
+{
+  "order_ref": "935df429-01f4-4073-8d13-9c6e539be2cd",
+  "created_at": "2025-10-05T21:11:57.527Z",
+  "payload": {
+    "items": [
+      {
+        "name": "9\" Cheese & Tomato Ⓥ  APP TEST ITEM",
+        "quantity": 1,
+        "unit_pence": 100,
+        "groups": [
+          {
+            "name": "Crust",
+            "values": [
+              "Deep Pan"
+            ]
+          },
+          {
+            "name": "Pizza Base",
+            "values": [
+              "BBQ"
+            ]
+          },
+          {
+            "name": "Add Stuffed Crust",
+            "values": [
+              "No"
+            ]
+          }
+        ]
+      }
+    ],
+    "delivery_fee_pence": 10,
+    "currency": "GBP",
+    "title": "Barnwell Grill Order",
+    "meta": {
+      "fulfilment": "delivery",
+      "scheduled_at": "2025-10-06T10:00:00.000Z",
+      "address": "Oundle, Corby and East Northamptonshire, PE8 4QU, East Midlands, England",
+      "customer": {
+        "name": "Richard Dowman",
+        "phone": "+447789770210",
+        "email": "r.dowman@eazi-apps.co.uk"
+      }
+    }
+  },
+  "printable_receipt": "                             ORDER\nORDER TYPE = DELIVERY\nORDER DATE = 6th Oct @ 10:00\n\nName: Richard Dowman\nPhone: +447789770210\nAddress: Oundle, Corby and East Northamptonshire, PE8 4QU, East Midlands, England\n\n---------------------------------------------------------------\n9\" Cheese & Tomato Ⓥ  APP TEST ITEM                       £1.00\nCrust: Deep Pan\nPizza Base: BBQ\nAdd Stuffed Crust: No\n---------------------------------------------------------------\nSUBTOTAL:                                                 £1.00\nDELIVERY FEE:                                             £0.10\nTOTAL:                                                    £1.10\n",
+  "payment_link_id": "4JCDW3TDO45VNBIP",
+  "payment_link_url": "https://square.link/u/l0JNWKTN",
+  "total_pence": 110,
+  "sentToPrinter": false,
+  "contactKey": "fe3800d6f30220e15d133bf43de0ad2e4e0b86b2add7f2b12c09fffbea178a75"
+}

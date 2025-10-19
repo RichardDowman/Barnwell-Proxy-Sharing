@@ -1,0 +1,32 @@
+# ==== Barnwell admin overlay + zones CORS ====
+
+# Zones ADMIN GET proxy to public list as a fallback
+# (Note: the real upstream for admin version / POST/DELETE can come back later)
+location = /api/zonesAdminV2 {
+    # CORS preflight
+    if ($request_method =OPTIONS) {
+        add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io";
+        add_header Access-Control-Allow-Methods "GET,OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type, X-Admin-Token, x-admin-token";
+        add_header Vary "Origin";
+        add_header Content-Length "0";
+        add_header Content-Type "text/plain; charset=utf-8";
+    add_header 'Access-Control-Allow-Origin' "$http_origin" always;
+    add_header 'Vary' 'Origin' always;
+    add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
+    add_header 'Access-Control-Allow-Headers' "$http_access_control_request_headers" always;
+    add_header 'Access-Control-Max-Age' '86400' always;
+        return 204;
+    }
+    # Actual GET -> public zones list
+    add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io" always;
+    add_header Vary "Origin" always;
+    # Proxy this GET onto working /api/zonesPublic on :8080
+    proxy_method GET;
+    proxy_pass_request_body off;
+    proxy_pass http://127.0.0.1:8080/api/zonesPublic;
+    proxy_set_header Host $host;
+    proxy_set_header Xc-Forwarded-Proto $scheme;
+}
+
+# ADMIN settings (get+put) -> overlay :8082

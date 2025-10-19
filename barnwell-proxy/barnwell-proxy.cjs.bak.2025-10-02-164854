@@ -1,0 +1,606 @@
+#!/usr/bin/env node
+/**
+ * Barnwell Grill Proxy (CommonJS) — full drop-in replacement
+ * - Node 20+ with global fetch
+ * - Adds /api/geocode endpoint to support frontend postcode lookup (returns Google-like shape)
+ * - Handles create-checkout-link with meta (safe: never send full meta to Square)
+ * - Formats receipts exactly to spec (63 dash separators, alignment, groups)
+ * - Prefills Square payment links using validated pre_populated_data when possible
+ * - Admin GET/POST/PUT for settings with X-Admin-Token enforcement
+ *
+ * Deployment:
+ * sudo tee /var/www/barnwell-proxy/barnwell-proxy.cjs >/dev/null <<'EOF'
+ * ...file contents...
+ * EOF
+ * sudo chmod +x /var/www/barnwell-proxy/barnwell-proxy.cjs
+ * sudo systemctl restart barnwell-proxy
+ * sudo journalctl -u barnwell-proxy -n 50 -f
+ */
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const express = require('express');
+
+/* ---------------- ENV LOADER ---------------- */
+(function loadEnvFile() {
+  try {
+    const p = '/etc/barnwell-proxy.env';
+    if (fs.existsSync(p)) {
+      const txt = fs.readFileSync(p, 'utf8');
+      for (const line of txt.split(/\r?\n/)) {
+        const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+        if (!m) continue;
+        const k = m[1]; let v = m[2];
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+        if (!(k in process.env)) process.env[k] = v;
+      }
+    }
+  } catch (_) { /* ignore */ }
+})();
+
+/* ---------------- CONFIG ---------------- */
+const PORT = parseInt(process.env.PORT || '8080', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || 'https://barnwellgrill.gbapps.cmslogin.io')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
+const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN || '';
+const SQUARE_ENV = (process.env.SQUARE_ENV || 'production').toLowerCase();
+const SQUARE_BASE = SQUARE_ENV === 'sandbox' ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
+const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID || '';
+const CHECKOUT_RETURN_URL = process.env.CHECKOUT_RETURN_URL || process.env.ORDERING_RETURN_URL ||
+  'https://barnwellgrill.gbapps.cmslogin.io/ordering?paid=1';
+
+/* Files */
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) {}
+const settingsFile = path.join(DATA_DIR, 'settings.json');
+const zonesFile = path.join(DATA_DIR, 'zones.json');
+
+/* Defaults if files missing */
+if (!fs.existsSync(settingsFile)) {
+  fs.writeFileSync(settingsFile, JSON.stringify({
+    businessHours: {
+      days: Array.from({ length: 7 }, () => ({ open: '11:00', close: '22:00', closed: false })),
+      leadTimeMinutes: 30,
+      allowPreorderDays: 1,
+      closed: false,
+      reopenAt: null
+    },
+    slotConfig: {
+      collection: { granularity_minutes: 30, min_lead_minutes: 30, min_order_pence: 800 },
+      delivery: { granularity_minutes: 30, min_lead_minutes: 45, min_order_pence: 1200 }
+    },
+    weekly: undefined
+  }, null, 2));
+}
+if (!fs.existsSync(zonesFile)) {
+  fs.writeFileSync(zonesFile, JSON.stringify({
+    zones: []
+  }, null, 2));
+}
+
+/* --------------- HELPERS ---------------- */
+const fetch = global.fetch || ((...a) => Promise.reject(new Error('fetch not available')));
+const readJSON = (f, fb = null) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return fb; } };
+const writeJSON = (f, o) => fs.writeFileSync(f, JSON.stringify(o, null, 2));
+const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+const money = (pence) => '£' + (Number(pence || 0) / 100).toFixed(2);
+
+/* CORS */
+function setCors(req, res) {
+  const origin = req.headers.origin || '';
+  if (!origin) { res.setHeader('Access-Control-Allow-Origin', '*'); return; }
+  if (CORS_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', CORS_ORIGINS[0] || '*');
+    res.setHeader('Vary', 'Origin');
+  }
+}
+function cors(req, res, next) {
+  setCors(req, res);
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Token, ngrok-skip-browser-warning');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+}
+
+/* Geocode helpers */
+async function geocodePostcodeWithGoogle(pc) {
+  const url = 'https://maps.googleapis.com/maps/api/geocode/json?address=' +
+    encodeURIComponent(pc + ', UK') + '&key=' + encodeURIComponent(GOOGLE_MAPS_API_KEY);
+  const r = await fetch(url, { method: 'GET' });
+  const j = await r.json().catch(() => null);
+  return j;
+}
+async function geocodePostcodeWithPostcodesIo(pc) {
+  try {
+    const r = await fetch('https://api.postcodes.io/postcodes/' + encodeURIComponent(pc), { method: 'GET' });
+    const j = await r.json().catch(() => null);
+    return j;
+  } catch (e) { return null; }
+}
+
+/* Point in polygon (ray casting) — ring: [[lng,lat], ...] */
+function pointInRing(lng, lat, ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = Number(ring[i][0]), yi = Number(ring[i][1]);
+    const xj = Number(ring[j][0]), yj = Number(ring[j][1]);
+    const intersect = ((yi > lat) !== (yj > lat)) &&
+      (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Normalize UK phone number to international format +44...
+ * Returns '' if not normalizeable
+ */
+function normalizePhoneUK(phone) {
+  if (!phone) return '';
+  let s = String(phone || '').trim();
+  s = s.replace(/[().\-\s]/g, '');
+  if (s.startsWith('00')) s = '+' + s.slice(2);
+  if (/^0\d{9,10}$/.test(s)) s = '+44' + s.slice(1);
+  if (/^\d{10,11}$/.test(s)) s = '+44' + s;
+  if (/^\+\d{7,15}$/.test(s)) return s;
+  const digits = s.replace(/\D/g, '');
+  if (/^\d{10,11}$/.test(digits)) return '+44' + digits;
+  if (/^\d{7,15}$/.test(digits)) return '+' + digits;
+  return '';
+}
+
+/** Split full name into given/family for Square prepopulation */
+function splitNameForSquare(fullName) {
+  if (!fullName) return { given_name: '', family_name: '' };
+  const parts = String(fullName).trim().split(/\s+/);
+  if (parts.length === 1) return { given_name: parts[0], family_name: '' };
+  return { given_name: parts[0], family_name: parts.slice(1).join(' ') };
+}
+
+/**
+ * Format receipt according to exact specifications (63 chars width)
+ */
+function buildReceipt(payload) {
+  const width = 63;
+  const dash = '-'.repeat(width);
+  const rpad = (s, w) => { s = String(s || ''); if (s.length >= w) return s.slice(0, w); return s + ' '.repeat(w - s.length); };
+  const lpad = (s, w) => { s = String(s || ''); if (s.length >= w) return s.slice(-w); return ' '.repeat(w - s.length) + s; };
+
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const fee = clamp(Number(payload.delivery_fee_pence || 0), 0, 10_000_000);
+  const meta = payload.meta || {};
+  const customer = meta.customer || {};
+  const fulfilment = (meta.fulfilment || 'collection').toLowerCase();
+  const scheduledAt = meta.scheduled_at ? new Date(meta.scheduled_at) : null;
+
+  let dateStr = 'ASAP';
+  if (scheduledAt && !isNaN(scheduledAt)) {
+    const day = scheduledAt.getDate();
+    const month = scheduledAt.toLocaleString('default', { month: 'short' });
+    const time = scheduledAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    let suffix = 'th';
+    if (![11,12,13].includes(day % 100)) {
+      if (day % 10 === 1) suffix = 'st';
+      else if (day % 10 === 2) suffix = 'nd';
+      else if (day % 10 === 3) suffix = 'rd';
+    }
+    dateStr = `${day}${suffix} ${month} @ ${time}`;
+  }
+
+  const lines = [];
+  lines.push('                             ORDER'); // centered approx per spec
+  lines.push(`ORDER TYPE = ${fulfilment.toUpperCase()}`);
+  lines.push(`ORDER DATE = ${dateStr}`);
+  lines.push('');
+  lines.push(`Name: ${customer.name || ''}`);
+  lines.push(`Phone: ${customer.phone || ''}`);
+  if (fulfilment === 'delivery' && meta.address) {
+    lines.push(`Address: ${meta.address}`);
+  }
+  lines.push('');
+  lines.push(dash);
+
+  for (const it of items) {
+    const qty = Number(it.quantity || 1) || 1;
+    const unitPence = Number(it.unit_pence || 0) || 0;
+    const totalPence = unitPence * qty;
+    const baseName = String(it.name || 'Item');
+    const itemLine = qty > 1 ? `${baseName} (+${qty - 1})` : baseName;
+    const priceText = money(totalPence);
+    const leftWidth = width - priceText.length;
+    lines.push(rpad(itemLine, leftWidth) + priceText);
+    if (Array.isArray(it.groups)) {
+      for (const g of it.groups) {
+        if (!g || !g.name) continue;
+        const vals = Array.isArray(g.values) ? g.values.filter(Boolean) : [];
+        if (vals.length === 0) continue;
+        lines.push(`${g.name}: ${vals.join(', ')}`);
+      }
+    }
+    lines.push(dash);
+  }
+
+  const subtotal = items.reduce((s, it) => s + (Number(it.unit_pence || 0) * (Number(it.quantity || 1) || 1)), 0);
+  const total = subtotal + fee;
+
+  function totalsLine(label, amount) {
+    const lbl = label.toUpperCase() + ':';
+    const amt = money(amount);
+    const space = width - lbl.length - amt.length;
+    const pad = space > 0 ? ' '.repeat(space) : ' ';
+    return lbl + pad + amt;
+  }
+
+  lines.push(totalsLine('SUBTOTAL', subtotal));
+  lines.push(totalsLine('DELIVERY FEE', fee));
+  lines.push(totalsLine('TOTAL', total));
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/* ---------------- EXPRESS ---------------- */
+const app = express();
+app.use(express.json({ limit: '2mb' }));
+app.use(cors);
+
+/* ----------- ROUTES ----------- */
+app.get('/api/health', (req, res) => {
+  setCors(req, res);
+  res.json({ ok: true, env: SQUARE_ENV });
+});
+
+/* Public settings */
+app.get('/api/settings', (req, res) => {
+  setCors(req, res);
+  const j = readJSON(settingsFile, {});
+  const out = {
+    businessHours: j.businessHours || {},
+    slotConfig: j.slotConfig || {},
+    manualClose: j.manualClose || { closed: false, reopenAt: null },
+    manualClosed: !!(j.manualClose && j.manualClose.closed),
+    reopenAt: j.manualClose ? j.manualClose.reopenAt : null,
+    weekly: j.weekly || undefined
+  };
+  res.json(out);
+});
+
+/* Admin settings (GET + POST + PUT) with X-Admin-Token */
+function checkAdmin(req, res) {
+  if (!ADMIN_TOKEN) {
+    res.status(500).json({ error: 'admin_token_not_configured' });
+    return false;
+  }
+  const header = (req.headers['x-admin-token'] || '').trim();
+  if (!header || header !== ADMIN_TOKEN) {
+    res.status(401).json({ error: 'unauthorized' });
+    return false;
+  }
+  return true;
+}
+
+app.get('/api/admin/settings', (req, res) => {
+  setCors(req, res);
+  if (!checkAdmin(req, res)) return;
+  res.json(readJSON(settingsFile, {}));
+});
+
+app.post('/api/admin/settings', (req, res) => {
+  setCors(req, res);
+  if (!checkAdmin(req, res)) return;
+  try {
+    const body = req.body || {};
+    const current = readJSON(settingsFile, {}) || {};
+    const merged = Object.assign({}, current, body);
+    writeJSON(settingsFile, merged);
+    res.json({ ok: true, saved: true });
+  } catch (e) {
+    res.status(500).json({ error: 'save_failed', detail: String(e && e.message || e) });
+  }
+});
+
+app.put('/api/admin/settings', (req, res) => {
+  setCors(req, res);
+  if (!checkAdmin(req, res)) return;
+  try {
+    const body = req.body || {};
+    const current = readJSON(settingsFile, {}) || {};
+    const merged = Object.assign({}, current, body);
+    writeJSON(settingsFile, merged);
+    res.json({ ok: true, saved: true });
+  } catch (e) {
+    res.status(500).json({ error: 'save_failed', detail: String(e && e.message || e) });
+  }
+});
+
+/* Zones public */
+app.get('/api/zonesPublic', (req, res) => {
+  setCors(req, res);
+  const j = readJSON(zonesFile, { zones: [] });
+  res.json({ zones: j.zones || [] });
+});
+app.get('/api/zones', (req, res) => {
+  setCors(req, res);
+  const j = readJSON(zonesFile, { zones: [] });
+  res.json({ zones: j.zones || [] });
+});
+
+/* New: Geocode endpoint used by frontend
+   - GET /api/geocode?postcode=PE8+4QU
+   - If GOOGLE_MAPS_API_KEY set, forwards to Google Geocode and returns JSON as-is (CORS allowed)
+   - Otherwise uses postcodes.io and returns a Google-like result array with geometry.location
+*/
+app.get('/api/geocode', async (req, res) => {
+  try {
+    setCors(req, res);
+    const postcode = (req.query.postcode || req.query.address || '').trim();
+    if (!postcode) return res.status(400).json({ results: [], status: 'ZERO_RESULTS', error: 'no_postcode' });
+
+    if (GOOGLE_MAPS_API_KEY) {
+      // Proxy Google Geocode (return response as-is)
+      const url = 'https://maps.googleapis.com/maps/api/geocode/json?address=' +
+        encodeURIComponent(postcode + ', UK') + '&key=' + encodeURIComponent(GOOGLE_MAPS_API_KEY);
+      const r = await fetch(url, { method: 'GET' });
+      const j = await r.json().catch(() => null);
+      if (!j) return res.status(502).json({ results: [], status: 'ZERO_RESULTS' });
+      return res.json(j);
+    }
+
+    // Fallback: postcodes.io -> craft Google-like result
+    const pj = await geocodePostcodeWithPostcodesIo(postcode).catch(() => null);
+    if (!pj || !pj.result) {
+      return res.json({ results: [], status: 'ZERO_RESULTS' });
+    }
+    const p = pj.result;
+    const formatted = [
+      p.admin_ward || '',
+      p.parliamentary_constituency || '',
+      p.postcode || '',
+      p.region || '',
+      p.country || ''
+    ].filter(Boolean).join(', ') || p.postcode || postcode;
+    const result = {
+      formatted_address: formatted,
+      geometry: { location: { lat: p.latitude, lng: p.longitude } },
+      postcode: p.postcode,
+      country: p.country
+    };
+    return res.json({ results: [result], status: 'OK' });
+  } catch (e) {
+    return res.status(500).json({ results: [], status: 'ERROR', error: String(e && e.message || e) });
+  }
+});
+
+/* Delivery price: by postcode OR lat/lng against polygon zones.json */
+app.post('/api/delivery-price', express.json(), async (req, res) => {
+  try {
+    setCors(req, res);
+    const { postcode, lat, lng } = req.body || {};
+    let L = (typeof lat === 'number') ? lat : null;
+    let G = (typeof lng === 'number') ? lng : null;
+
+    if ((L == null || G == null) && postcode) {
+      // try geocode via google/postcodes (same logic as endpoint)
+      try {
+        if (GOOGLE_MAPS_API_KEY) {
+          const r = await fetch('https://maps.googleapis.com/maps/api/geocode/json?address=' + encodeURIComponent(postcode + ', UK') + '&key=' + encodeURIComponent(GOOGLE_MAPS_API_KEY));
+          const j = await r.json().catch(() => null);
+          const loc = j?.results?.[0]?.geometry?.location;
+          if (loc) { L = loc.lat; G = loc.lng; }
+        } else {
+          const pj = await geocodePostcodeWithPostcodesIo(postcode).catch(() => null);
+          if (pj && pj.result) { L = pj.result.latitude; G = pj.result.longitude; }
+        }
+      } catch (e) { /* ignore */ }
+    }
+    if (L == null || G == null) return res.json({
+      deliverable: false,
+      reason: 'no_location',
+      min_order_pence: (readJSON(settingsFile, {}).slotConfig?.delivery?.min_order_pence || 1200)
+    });
+
+    const zones = readJSON(zonesFile, { zones: [] }).zones || [];
+    let hit = null;
+    for (const z of zones) {
+      if (z.active === false) continue;
+      const ring = z?.polygon?.coordinates?.[0] || z.ring || z.coordinates || null;
+      if (!Array.isArray(ring) || ring.length < 3) continue;
+      if (pointInRing(G, L, ring)) { hit = z; break; }
+    }
+    if (!hit) return res.json({
+      deliverable: false,
+      matched: false,
+      min_order_pence: (readJSON(settingsFile, {}).slotConfig?.delivery?.min_order_pence || 1200)
+    });
+
+    const pence = Number(hit.price_pence || 0);
+    res.json({
+      deliverable: true,
+      matched: true,
+      zoneName: hit.name || hit.id || 'Zone',
+      price_pence: pence,
+      min_order_pence: (readJSON(settingsFile, {}).slotConfig?.delivery?.min_order_pence || 1200)
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'quote_failed', detail: String(e && e.message || e) });
+  }
+});
+
+/* Catalog (Square) — all objects of given types, with pagination */
+app.get('/api/catalogEverything', async (req, res) => {
+  try {
+    setCors(req, res);
+    const types = String(req.query.types || 'ITEM,ITEM_VARIATION,CATEGORY,MODIFIER_LIST,ITEM_OPTION')
+      .split(',').map(s => s.trim().toUpperCase()).filter(Boolean).join(',');
+    if (!SQUARE_ACCESS_TOKEN) return res.status(500).json({ error: 'no_square_token' });
+
+    let cursor = null;
+    const objects = [];
+    const related = [];
+    do {
+      const body = { types, include_related_objects: true };
+      if (cursor) body.cursor = cursor;
+
+      const r = await fetch(`${SQUARE_BASE}/v2/catalog/search`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${SQUARE_ACCESS_TOKEN}`,
+          'Square-Version': '2024-08-15',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) {
+        return res.status(500).json({ error: 'square_catalog_error', status: r.status, detail: j });
+      }
+      if (Array.isArray(j.objects)) objects.push(...j.objects);
+      if (Array.isArray(j.related_objects)) related.push(...j.related_objects);
+      cursor = j.cursor || null;
+    } while (cursor);
+
+    res.json({ objects: [...objects, ...related] });
+  } catch (e) {
+    res.status(500).json({ error: 'catalog_failed', detail: String(e && e.message || e) });
+  }
+});
+
+/* Create checkout link (Square Payment Links) with meta safe handling & printable receipt */
+app.post('/api/create-checkout-link', async (req, res) => {
+  try {
+    setCors(req, res);
+
+    const payload = req.body || {};
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const deliveryFee = clamp(Number(payload.delivery_fee_pence || 0), 0, 10_000_000);
+    const subtotal = items.reduce((s, it) => s + (Number(it.unit_pence || 0) * (Number(it.quantity || 1) || 1)), 0);
+    const totalPence = subtotal + deliveryFee;
+    const meta = payload.meta || {};
+    const customer = meta.customer || {};
+
+    if (!SQUARE_ACCESS_TOKEN || !SQUARE_LOCATION_ID) {
+      return res.status(500).json({ ok: false, error: 'square_config_missing' });
+    }
+    if (!totalPence || totalPence <= 0) {
+      return res.status(400).json({ ok: false, error: 'invalid_total' });
+    }
+
+    // Build printable receipt text
+    const printable_receipt = buildReceipt(payload);
+
+    // Prepare safe pre_populated_data for Square (only validated fields)
+    const pre_populated_data = {};
+
+    // Phone
+    if (customer.phone) {
+      const norm = normalizePhoneUK(customer.phone);
+      if (norm && /^\+\d{7,15}$/.test(norm)) {
+        pre_populated_data.buyer_phone_number = norm;
+      } else {
+        console.warn('[create-checkout-link] phone invalid for Square prefill, omitting:', customer.phone);
+      }
+    }
+
+    // Name split
+    if (customer.name) {
+      const nm = splitNameForSquare(customer.name);
+      if (nm.given_name) pre_populated_data.buyer_given_name = nm.given_name;
+      if (nm.family_name) pre_populated_data.buyer_family_name = nm.family_name;
+    }
+
+    // Email
+    if (customer.email && typeof customer.email === 'string' && customer.email.includes('@')) {
+      pre_populated_data.buyer_email = customer.email;
+    }
+
+    const orderTitle = payload.title || 'Barnwell Grill Order';
+    const orderRef = crypto.randomUUID();
+
+    let returnUrl = CHECKOUT_RETURN_URL || '';
+    if (returnUrl) {
+      if (!returnUrl.includes('?')) returnUrl += '?paid=1&ref=' + orderRef;
+      else returnUrl += '&ref=' + orderRef;
+    }
+
+    const body = {
+      idempotency_key: orderRef,
+      quick_pay: {
+        location_id: SQUARE_LOCATION_ID,
+        name: orderTitle,
+        price_money: { amount: totalPence, currency: String(payload.currency || 'GBP').toUpperCase() }
+      },
+      pre_populated_data: Object.keys(pre_populated_data).length ? pre_populated_data : undefined,
+      checkout_options: returnUrl ? { redirect_url: returnUrl } : undefined
+    };
+
+    const r = await fetch(`${SQUARE_BASE}/v2/online-checkout/payment-links`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SQUARE_ACCESS_TOKEN}`,
+        'Square-Version': '2024-08-15',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    const j = await r.json().catch(() => null);
+
+    if (!r.ok) {
+      console.error('[SquareLinkFail]', r.status, j);
+      if (body.pre_populated_data) {
+        try {
+          const fallbackBody = Object.assign({}, body);
+          delete fallbackBody.pre_populated_data;
+          const rf = await fetch(`${SQUARE_BASE}/v2/online-checkout/payment-links`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${SQUARE_ACCESS_TOKEN}`,
+              'Square-Version': '2024-08-15',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(fallbackBody)
+          });
+          const jf = await rf.json().catch(() => null);
+          if (rf.ok) {
+            const url = jf?.payment_link?.url || jf?.url || null;
+            if (!url) {
+              return res.status(502).json({ ok: false, error: 'missing_payment_link_url_after_fallback', detail: jf });
+            }
+            return res.json({ ok: true, method: 'square.payment-links', url, printable_receipt, order_ref: orderRef });
+          }
+        } catch (e) {
+          console.error('[Square fallback error]', e);
+        }
+      }
+      return res.status(502).json({
+        ok: false,
+        error: 'square_payment_link_failed',
+        status: r.status,
+        detail: j
+      });
+    }
+
+    const url = j?.payment_link?.url || j?.url || null;
+    if (!url) {
+      return res.status(500).json({ ok: false, error: 'missing_payment_link_url', detail: j });
+    }
+
+    res.json({ ok: true, method: 'square.payment-links', url, printable_receipt, order_ref: orderRef });
+  } catch (e) {
+    console.error('Create checkout link error:', e);
+    res.status(500).json({ ok: false, error: 'create_checkout_failed', detail: String(e && e.message || e) });
+  }
+});
+
+/* --------------- START --------------- */
+app.listen(PORT, () => {
+  console.log(`barnwell-proxy listening on :${PORT}`);
+});

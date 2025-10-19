@@ -1,0 +1,181 @@
+import express from 'express';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import iconv from 'iconv-lite';
+import { nanoid } from 'nanoid';
+
+const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', true);
+app.use(express.json());
+
+const PORT = parseInt(process.env.PORT || '8091', 10);
+const DATA_DIR = process.env.DATA_DIR || '/var/www/barnwell-proxy/data';
+const JOBS_DIR = path.join(DATA_DIR, 'cloudprnt', 'jobs');
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.CLOUDPRNT_SECRET || '';
+
+async function ensureDir(p){ await fs.mkdir(p, { recursive: true }); }
+function okAuth(key){ return ADMIN_TOKEN && key === ADMIN_TOKEN; }
+
+function jobIdFromName(name){
+  // file names are e.g. mglxxxx-xxxxxx.txt or _sending_mglxxxx-xxxxxx.txt
+  const base = path.basename(name);
+  const m = base.match(/(?:_sending_)?([^\.]+)\.txt$/);
+  return m ? m[1] : null;
+}
+
+async function listJobs(){
+  try {
+    const files = (await fs.readdir(JOBS_DIR)).filter(f => f.endsWith('.txt'));
+    files.sort();
+    return files;
+  } catch { return []; }
+}
+
+async function getSendingFile(){
+  const files = await listJobs();
+  return files.find(f => f.startsWith('_sending_')) || null;
+}
+async function getReadyFile(){
+  const files = await listJobs();
+  return files.find(f => !f.startsWith('_sending_')) || null;
+}
+
+function stripBOM(s){
+  if (!s) return s;
+  return s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s;
+}
+
+async function markSent(id){
+  const flag = path.join(JOBS_DIR, `._sent_${id}.flag`);
+  try { await fs.writeFile(flag, 'sent', 'utf8'); } catch {}
+}
+async function wasSent(id){
+  try {
+    await fs.access(path.join(JOBS_DIR, `._sent_${id}.flag`));
+    return true;
+  } catch { return false; }
+}
+async function clearFlags(){
+  try {
+    const files = await fs.readdir(JOBS_DIR);
+    await Promise.all(files.filter(f=>f.startsWith('._sent_')).map(f=>fs.unlink(path.join(JOBS_DIR,f)).catch(()=>{})));
+  } catch {}
+}
+
+async function beginSend(){
+  const sending = await getSendingFile();
+  if (sending) return path.join(JOBS_DIR, sending);
+  const ready = await getReadyFile();
+  if (!ready) return null;
+  const id = jobIdFromName(ready);
+  const from = path.join(JOBS_DIR, ready);
+  const to = path.join(JOBS_DIR, `_sending_${id}.txt`);
+  await fs.rename(from, to);
+  return to;
+}
+
+async function finishDelete(id){
+  // remove _sending_ file and its sent flag
+  const sending = path.join(JOBS_DIR, `_sending_${id}.txt`);
+  try { await fs.unlink(sending); } catch {}
+  try { await fs.unlink(path.join(JOBS_DIR, `._sent_${id}.flag`)); } catch {}
+}
+
+function buildCp858Buffer(text){
+  // ESC R 02 (UK), ESC GS t 04 (CP858), then text in CP858
+  const prolog = Buffer.from([0x1B,0x52,0x02, 0x1B,0x1D,0x74,0x04]);
+  const body = iconv.encode(stripBOM(text || ''), 'cp858');
+  return Buffer.concat([prolog, body]);
+}
+
+/* ---------------- Admin helper to enqueue local text (optional) ---------------- */
+app.post('/cloudprnt/enqueue-local', async (req,res)=>{
+  if ((req.get('X-Admin-Token')||'') !== ADMIN_TOKEN) return res.status(401).json({ok:false,error:'unauthorized'});
+  try{
+    await ensureDir(JOBS_DIR);
+    const id = nanoid();
+    const out = path.join(JOBS_DIR, `${id}.txt`);
+    const text = (req.body && req.body.text) ? String(req.body.text) : 'TEST £ 12.34';
+    await fs.writeFile(out, text, 'utf8');
+    res.json({ ok:true, jobId:id, bytes: text.length });
+  }catch(err){
+    res.status(500).json({ ok:false, error: String(err) });
+  }
+});
+
+/* ---------------- CloudPRNT main endpoint ---------------- */
+// 1) Poll (printer will POST; we accept GET/POST the same)
+app.all('/cloudprnt/poll', async (req, res) => {
+  const key = (req.query.key || '').toString();
+  if (!okAuth(key)) return res.status(401).json({ ok:false, error:'unauthorized' });
+
+  const type = (req.query.type || '').toString();
+
+  // a) When printer asks for bytes (type=text/plain)
+  if (type && type.startsWith('text/plain')) {
+    const sendingPath = await beginSend(); // starts or continues sending first job
+    if (!sendingPath) return res.status(204).end();
+
+    const id = jobIdFromName(sendingPath);
+    try {
+      const txt = await fs.readFile(sendingPath, 'utf8');
+      const payload = buildCp858Buffer(txt);
+      res.set('Content-Type','text/plain; charset=cp858');
+      res.status(200).send(payload);
+      await markSent(id);
+    } catch (err) {
+      return res.status(500).json({ ok:false, error:String(err) });
+    }
+    return;
+  }
+
+  // b) Printer acknowledges (DELETE) after successful print
+  if (req.method === 'DELETE') {
+    const code = (req.query.code || '').toString();
+    const sending = await getSendingFile();
+    if (!sending) return res.json({ ok:false, deleted:0 });
+
+    const id = jobIdFromName(sending);
+    const printed = await wasSent(id);
+    if (code.startsWith('200') && printed) {
+      await finishDelete(id);
+      return res.json({ ok:true, deleted:1 });
+    } else {
+      return res.json({ ok:false, deleted:0 });
+    }
+  }
+
+  // c) Discovery: tell the printer if a job is waiting
+  const pending = await getReadyFile();
+  const sending = await getSendingFile();
+  const active = sending || pending;
+
+  if (!active) return res.status(204).end();
+
+  const id = jobIdFromName(active);
+  // Always publish plain-text (CP858) fetch/delete URLs
+  const host = (req.headers['x-forwarded-host'] || req.headers['host'] || '127.0.0.1').toString();
+  const base = `http://${host}`;
+  const jobFetchUrl  = `${base}/cloudprnt/poll?type=text/plain&key=${encodeURIComponent(key)}`;
+  const jobDeleteUrl = `${base}/cloudprnt/poll?code=200%20OK&key=${encodeURIComponent(key)}`;
+
+  res.json({
+    jobReady: true,
+    mediaTypes: ['text/plain','text/plain; charset=cp858'],
+    contentType: 'text/plain; charset=cp858',
+    jobFetchUrl,
+    deleteMethod: 'DELETE',
+    jobDeleteUrl,
+    jobId: id
+  });
+});
+
+/* ---------------- Boot ---------------- */
+app.listen(PORT, async () => {
+  await ensureDir(JOBS_DIR);
+  // Clean any leftover flags for a fresh start
+  await clearFlags();
+  console.log(`cloudprnt listening on :${PORT} jobs=${JOBS_DIR}`);
+});

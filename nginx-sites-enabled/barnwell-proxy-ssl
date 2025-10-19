@@ -1,0 +1,50 @@
+# === HTTPS vhost ===
+server {
+#     include /etc/nginx/snippets/barnwell-admin-overlay.conf;
+#     include /etc/nginx/snippets/barnwell-cors.conf;
+    include /etc/nginx/snippets/cloudprnt-post-compat.conf;
+  listen 443 ssl;
+  listen [::]:443 ssl ipv6only=on;
+  server_name api.barnwellpizzandgrill.co.uk;
+
+  # --- TLS (Let's Encrypt) ---
+  ssl_certificate     /etc/letsencrypt/live/api.barnwellpizzandgrill.co.uk/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/api.barnwellpizzandgrill.co.uk/privkey.pem;
+  include             /etc/letsencrypt/options-ssl-nginx.conf;
+  ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+
+  # Quick probe
+  location = /printer-hello.txt {
+    default_type text/plain;
+    return 200 "PRINTER HELLO\nTime: $time_local\n";
+  }
+
+  # CloudPRNT -> Node (8091)
+
+  # Everything else -> Node (8080)
+  location / {
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_pass http://127.0.0.1:8080;
+  }
+}
+
+# === HTTP vhost (80) for ACME + redirect ===
+server {
+  listen 80;
+  listen [::]:80;
+  server_name api.barnwellpizzandgrill.co.uk;
+
+  # Let’s Encrypt HTTP-01
+  location ^~ /.well-known/acme-challenge/ {
+    default_type "text/plain";
+    root /var/www/html;
+  }
+
+  # everything else -> HTTPS
+  location / {
+    return 301 https://$host$request_uri;
+  }
+}

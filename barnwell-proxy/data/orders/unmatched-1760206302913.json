@@ -1,0 +1,86 @@
+{
+  "merchant_id": "MLRVNNTQGEETM",
+  "type": "payment.created",
+  "event_id": "ead7c83d-a82d-3fb3-8a4e-bfe5d0828ec2",
+  "created_at": "2025-10-10T18:08:14.382Z",
+  "data": {
+    "type": "payment",
+    "id": "37O1ZH5yUUZuzkb8uTd4vfUCAGGZY",
+    "object": {
+      "payment": {
+        "amount_money": {
+          "amount": 2620,
+          "currency": "GBP"
+        },
+        "application_details": {
+          "square_product": "SQUARE_POS"
+        },
+        "approved_money": {
+          "amount": 0,
+          "currency": "GBP"
+        },
+        "card_details": {
+          "application_cryptogram": "be127bd5bedda290",
+          "application_identifier": "A0000000031010",
+          "application_name": "Visa DEBIT",
+          "avs_status": "AVS_NOT_CHECKED",
+          "card": {
+            "bin": "481876",
+            "card_brand": "VISA",
+            "card_type": "DEBIT",
+            "exp_month": 12,
+            "exp_year": 2031,
+            "fingerprint": "sq-1-Rfm-OwDs9G5IhxQcna6s6Kn4zJZ83B4M0duNJetA4VtluXuDsroyg_7p41EGkuCGPw",
+            "last_4": "2580",
+            "payment_account_reference": "V0010013025027423316095096023",
+            "prepaid_type": "NOT_PREPAID"
+          },
+          "card_payment_timeline": {
+            "authorized_at": "2025-10-10T18:08:14.364Z"
+          },
+          "cvv_status": "CVV_NOT_CHECKED",
+          "device_details": {
+            "device_id": "527CS134A9000265",
+            "device_installation_id": "b3824923-4461-4d33-a95e-ed07e928c1d4",
+            "device_name": "Square Register 0265"
+          },
+          "emv_details": {
+            "authorization_response_code": "3035"
+          },
+          "entry_method": "CONTACTLESS",
+          "errors": [
+            {
+              "category": "PAYMENT_METHOD_ERROR",
+              "code": "INSUFFICIENT_FUNDS",
+              "detail": "Authorization error: 'INSUFFICIENT_FUNDS'"
+            }
+          ],
+          "statement_description": "SQ *BARNWELL PIZZA AND G",
+          "status": "FAILED",
+          "verification_method": "ON_DEVICE",
+          "verification_results": "SUCCESS"
+        },
+        "created_at": "2025-10-10T18:08:13.945Z",
+        "delay_action": "CANCEL",
+        "delay_duration": "PT36H",
+        "delayed_until": "2025-10-12T06:08:13.945Z",
+        "device_details": {
+          "device_id": "527CS134A9000265",
+          "device_installation_id": "b3824923-4461-4d33-a95e-ed07e928c1d4",
+          "device_name": "Square Register 0265"
+        },
+        "id": "37O1ZH5yUUZuzkb8uTd4vfUCAGGZY",
+        "location_id": "L0R86R4QCD2NF",
+        "order_id": "YnGDAepaA1cYoHaEAlIRJT6RX8BZY",
+        "source_type": "CARD",
+        "status": "FAILED",
+        "total_money": {
+          "amount": 2620,
+          "currency": "GBP"
+        },
+        "updated_at": "2025-10-10T18:08:14.364Z",
+        "version": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,261 @@
+#!/usr/bin/env node
+// Barnwell proxy API (CommonJS)
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const express = require('express');
+
+const PORT        = process.env.PROXY_PORT || 8080;
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'CHANGE_ME';
+const SECRET      = process.env.CLOUDPRNT_SECRET || 'CHANGE_ME';
+const JOBS_DIR    = process.env.CLOUDPRNT_JOBS || '/var/www/barnwell-proxy/data/cloudprnt/jobs';
+
+fs.mkdirSync(JOBS_DIR, { recursive: true });
+
+const app = express();
+app.disable('x-powered-by');
+app.use(express.json({ limit: '1mb' }));
+
+// ----- receipt helpers
+const LINE_WIDTH = 42;
+const dashLine = () => '-'.repeat(LINE_WIDTH);
+const center = (t='') => ' '.repeat(Math.max(0, Math.floor((LINE_WIDTH - String(t).length)/2))) + t;
+const money  = p => `£${(Number(p||0)/100).toFixed(2)}`;
+const colLR  = (l='', r='') => {
+  const space = Math.max(1, LINE_WIDTH - String(l).length - String(r).length);
+  return String(l) + ' '.repeat(space) + String(r);
+};
+
+function buildReceipt(order) {
+  const lines = [];
+  const fulfilment = (order.fulfilment || 'collection');
+  const pretty = fulfilment.charAt(0).toUpperCase() + fulfilment.slice(1).toLowerCase();
+
+  lines.push(center(`New ${pretty} Order`));
+  lines.push(center(order.scheduled_at ? String(order.scheduled_at) : 'ASAP'));
+  lines.push('');
+
+  if (order.customer?.name)  lines.push(`Customer: ${order.customer.name}`);
+  if (order.customer?.phone) lines.push(`Phone:    ${order.customer.phone}`);
+  if (order.customer?.address) {
+    const addr = Array.isArray(order.customer.address)
+      ? order.customer.address
+      : String(order.customer.address).split(/\r?\n/);
+    addr.filter(Boolean).forEach(a => lines.push(a));
+  }
+
+  lines.push('');
+  lines.push(dashLine());
+  lines.push('');
+
+  let subtotal = 0;
+  (order.items||[]).forEach(it => {
+    const qty = Number(it.quantity||1);
+    const lineTotal = qty * Number(it.unit_pence||0);
+    subtotal += lineTotal;
+
+    const name = qty > 1 ? `${it.name} x${qty}` : it.name;
+    lines.push(colLR(name, money(lineTotal)));
+
+    if (Array.isArray(it.variants)) {
+      it.variants.forEach(v => lines.push(`  ${String(v.group||'Option').toUpperCase()}: ${v.choice||''}`));
+    }
+    if (Array.isArray(it.modifiers)) {
+      it.modifiers.forEach(m => {
+        const list = Array.isArray(m.choices) ? m.choices : (m.choice ? [m.choice] : []);
+        lines.push(`  ${String(m.group||'Modifiers').toUpperCase()}: ${list.join(', ')}`);
+      });
+    }
+    lines.push('');
+  });
+
+  lines.push(dashLine());
+  lines.push(colLR('SUBTOTAL:',     money(subtotal)));
+  const fee = Number(order.delivery_fee_pence||0);
+  lines.push(colLR('DELIVERY FEE:', money(fee)));
+  lines.push(colLR('TOTAL:',        money(subtotal + fee)));
+  lines.push('');
+  lines.push('\n');
+
+  return lines.join('\n');
+}
+
+// ----- queue (adds UTF-8 BOM so £ prints correctly)
+function enqueueText(textUtf8) {
+  const name = `${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}.txt`;
+  const file = path.join(JOBS_DIR, name);
+  const BOM  = Buffer.from([0xEF, 0xBB, 0xBF]);
+  const body = Buffer.from(textUtf8 || '', 'utf-8');
+  fs.writeFileSync(file, Buffer.concat([BOM, body]));
+  return name.replace(/\.txt$/,'');
+}
+
+// ----- normalize
+function cleanItem(it) {
+  return {
+    name: it.name,
+    quantity: Number(it.quantity||1),
+    unit_pence: Number(it.unit_pence||0),
+    variants: Array.isArray(it.variants) ? it.variants.map(v => ({
+      group: v.group || v.name || 'Option',
+      choice: v.choice || v.value || v.option || ''
+    })) : [],
+    modifiers: Array.isArray(it.modifiers) ? it.modifiers.map(m => ({
+      group: m.group || m.name || 'Modifiers',
+      choices: Array.isArray(m.choices) ? m.choices : (m.choice ? [m.choice] : [])
+    })) : []
+  };
+}
+function normalizeIncomingOrder(input) {
+  return {
+    title: input.title || 'Barnwell Order',
+    currency: input.currency || 'GBP',
+    fulfilment: input.meta?.fulfilment || input.fulfilment || 'collection',
+    scheduled_at: input.meta?.scheduled_at || input.scheduled_at || null,
+    customer: {
+      name:  input.meta?.customer?.name  || input.customer?.name  || '',
+      phone: input.meta?.customer?.phone || input.customer?.phone || '',
+      address: input.meta?.customer?.address || input.customer?.address || null
+    },
+    items: Array.isArray(input.items) ? input.items.map(cleanItem) : [],
+    delivery_fee_pence: Number(input.delivery_fee_pence||0)
+  };
+}
+
+// ----- routes
+app.get('/api/health', (req, res) => res.json({ ok: true, env: 'production' }));
+
+app.post('/api/admin/print-test', (req, res) => {
+  const tok = String(req.header('X-Admin-Token')||'');
+  if (tok !== ADMIN_TOKEN) return res.status(401).end();
+
+  const sample = {
+    fulfilment: 'collection',
+    scheduled_at: null,
+    customer: { name: 'Test Customer', phone: '07123 456789' },
+    items: [
+      { name: 'Margherita 12"', quantity: 1, unit_pence: 899,
+        variants: [{ group: 'Size', choice: '12"' }],
+        modifiers: [{ group: 'Toppings', choices: ['Extra cheese'] }] },
+      { name: 'Garlic Bread', quantity: 2, unit_pence: 349 }
+    ],
+    delivery_fee_pence: 0
+  };
+
+  const text = buildReceipt(sample);
+  const jobId = enqueueText(text);
+  res.json({ ok: true, jobId, preview: text });
+});
+
+app.post('/api/create-checkout-link', (req, res) => {
+  const order = normalizeIncomingOrder(req.body||{});
+  const printable_receipt = buildReceipt(order);
+  res.json({
+    ok: true,
+    method: 'square.payment-links',
+    url: 'https://square.link/u/FakePaymentLink',
+    printable_receipt,
+    order_ref: crypto.randomUUID(),
+    payment_link_id: crypto.randomBytes(8).toString('hex').toUpperCase()
+  });
+});
+
+app.post('/api/cloudprnt/enqueue', (req, res) => {
+  const tok = String(req.header('X-Admin-Token')||'');
+  if (tok !== ADMIN_TOKEN) return res.status(401).end();
+
+  let text = req.body && req.body.receipt_text ? String(req.body.receipt_text) : null;
+  if (!text) {
+    const order = normalizeIncomingOrder(req.body||{});
+    text = buildReceipt(order);
+  }
+  const jobId = enqueueText(text);
+  res.json({ ok: true, jobId, bytes: Buffer.byteLength(text, 'utf-8') });
+});
+
+// ==== ZONES ADMIN V2 (additive; requires X-Admin-Token) ====
+function loadZones(){ try { return readJSON(zonesFile,{zones:[]}); } catch(_){ return {zones:[]}; } }
+function saveZones(obj){ try { writeJSON(zonesFile, obj || {zones:[]}); return true; } catch(e){ return false; } }
+
+// GET /api/zonesAdminV2?activeOnly=(true|false)
+app.get('/api/zonesAdminV2', (req,res)=>{
+  try{
+    try{ setCors(req,res); }catch(_){}
+    if(!checkAdmin(req,res)) return; // require admin for this admin endpoint
+    const activeOnly = String(req.query.activeOnly||'false').toLowerCase() === 'true';
+    const data = loadZones();
+    let zones = Array.isArray(data.zones) ? data.zones : [];
+    if(activeOnly) zones = zones.filter(z => z && z.active !== false);
+    return res.json({ ok:true, zones });
+  }catch(e){ return res.status(500).json({ ok:false, error:String(e&&e.message||e) }); }
+});
+
+// POST /api/zonesAdminV2  (create or update)
+// body: { id?, name, price_pence, active, polygon: {type:'Polygon', coordinates:[ [ [lng,lat], ...closed ] ] } }
+app.post('/api/zonesAdminV2', (req,res)=>{
+  try{
+    try{ setCors(req,res); }catch(_){}
+    if(!checkAdmin(req,res)) return;
+    const body = req.body || {};
+    const name = (body.name||'').toString().trim();
+    const price_pence = Number(body.price_pence||0);
+    const active = (body.active === false) ? false : true;
+    const poly = body.polygon && body.polygon.coordinates && body.polygon.coordinates[0];
+
+    if(!name) return res.status(400).json({ ok:false, error:'name_required' });
+    if(!Number.isFinite(price_pence) || price_pence < 0) return res.status(400).json({ ok:false, error:'price_pence_invalid' });
+    if(!Array.isArray(poly) || poly.length < 3) return res.status(400).json({ ok:false, error:'polygon_invalid' });
+
+    const data = loadZones();
+    const zones = Array.isArray(data.zones) ? data.zones : [];
+    let zone = null;
+
+    if(body.id){
+      const idx = zones.findIndex(z => z && z.id === body.id);
+      if(idx >= 0){
+        zones[idx] = Object.assign({}, zones[idx], {
+          id: zones[idx].id,
+          name, price_pence, active,
+          polygon: { type:'Polygon', coordinates:[ poly ] }
+        });
+        zone = zones[idx];
+      } else {
+        zone = {
+          id: body.id,
+          name, price_pence, active,
+          polygon: { type:'Polygon', coordinates:[ poly ] }
+        };
+        zones.push(zone);
+      }
+    }else{
+      const id = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
+      zone = { id, name, price_pence, active, polygon: { type:'Polygon', coordinates:[ poly ] } };
+      zones.push(zone);
+    }
+
+    if(!saveZones({ zones })) return res.status(500).json({ ok:false, error:'save_failed' });
+    return res.json({ ok:true, zone });
+  }catch(e){ return res.status(500).json({ ok:false, error:String(e&&e.message||e) }); }
+});
+
+// DELETE /api/zonesAdminV2?id=<id>
+app.delete('/api/zonesAdminV2', (req,res)=>{
+  try{
+    try{ setCors(req,res); }catch(_){}
+    if(!checkAdmin(req,res)) return;
+    const id = String(req.query.id||'').trim();
+    if(!id) return res.status(400).json({ ok:false, error:'id_required' });
+    const data = loadZones();
+    let zones = Array.isArray(data.zones) ? data.zones : [];
+    const before = zones.length;
+    zones = zones.filter(z => z && z.id !== id);
+    if(before === zones.length) return res.status(404).json({ ok:false, error:'not_found' });
+    if(!saveZones({ zones })) return res.status(500).json({ ok:false, error:'save_failed' });
+    return res.json({ ok:true, removed:id });
+  }catch(e){ return res.status(500).json({ ok:false, error:String(e&&e.message||e) }); }
+});
+app.listen(PORT, () => {
+  console.log('[firebase] credentials file not set or missing; using local file fallback for order history');
+  console.log(`barnwell-proxy listening on :${PORT}`);
+});

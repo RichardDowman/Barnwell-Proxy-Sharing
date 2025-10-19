@@ -1,0 +1,18 @@
+                             ORDER
+ORDER TYPE = DELIVERY
+ORDER DATE = 6th Oct @ 10:00
+
+Name: Richard Dowman
+Phone: +447789770210
+Address: Oundle, Corby and East Northamptonshire, PE8 4QU, East Midlands, England
+
+---------------------------------------------------------------
+9" Cheese & Tomato Ⓥ  APP TEST ITEM                       £1.00
+Size: Regular £1.00
+Crust: Deep Pan
+Pizza Base: Garlic Butter
+Add Stuffed Crust: No
+---------------------------------------------------------------
+SUBTOTAL:                                                 £1.00
+DELIVERY FEE:                                             £0.10
+TOTAL:                                                    £1.10

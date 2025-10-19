@@ -1,0 +1,16 @@
+[Unit]
+Description=Barnwell CloudPRNT microservice
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/barnwell-proxy.env
+WorkingDirectory=/var/www/barnwell-proxy
+ExecStart=/usr/bin/env NODE_ENV=production PORT=8091 node /var/www/barnwell-proxy/cloudprnt.mjs
+Restart=always
+RestartSec=2
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,51 @@
+{
+  "storeOpen": true,
+  "reopenAt": null,
+  "businessHours": {
+    "days": [
+      {
+        "open": "11:00",
+        "close": "22:00"
+      },
+      {
+        "open": "11:00",
+        "close": "22:00"
+      },
+      {
+        "open": "11:00",
+        "close": "22:00"
+      },
+      {
+        "open": "11:00",
+        "close": "22:00"
+      },
+      {
+        "open": "11:00",
+        "close": "22:00"
+      },
+      {
+        "open": "11:00",
+        "close": "22:00"
+      },
+      {
+        "open": "11:00",
+        "close": "22:00"
+      }
+    ],
+    "leadTimeMinutes": 30,
+    "allowPreorderDays": 1
+  },
+  "slotConfig": {
+    "collection": {
+      "granularity_minutes": 60,
+      "min_lead_minutes": 30,
+      "min_order_pence": 800
+    },
+    "delivery": {
+      "granularity_minutes": 60,
+      "min_lead_minutes": 45,
+      "min_order_pence": 1200
+    }
+  },
+  "updatedAt": "2025-09-14T19:40:19.392Z"
+}

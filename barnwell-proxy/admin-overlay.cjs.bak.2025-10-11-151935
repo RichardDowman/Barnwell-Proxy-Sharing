@@ -1,0 +1,130 @@
+/**
+ * Barnwell overlay:
+ *  - GET  /api/settings                     (public)
+ *  - GET  /api/admin/settings               (X-Admin-Token)
+ *  - PUT  /api/admin/settings               (X-Admin-Token)
+ *  - GET  /api/geocode?postcode=PE8+4QU     (public; uses GOOGLE_MAPS_API_KEY if set)
+ * Listens on 127.0.0.1:8082
+ */
+const express = require('express');
+const fs = require('fs');
+const fsp = fs.promises;
+const path = require('path');
+
+const PORT = 8082;
+const DATA_DIR = process.env.DATA_DIR || '/var/www/barnwell-proxy/data';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+
+const app = express();
+app.disable('x-powered-by');
+app.use(express.json({ limit: '1mb' }));
+
+function jsonError(res, code, error, detail) {
+  res.status(code).json({ ok: false, error, detail: detail ?? null });
+}
+
+async function readJSONSafe(file, fallback = {}) {
+  try {
+    const buf = await fsp.readFile(file);
+    const txt = buf.toString('utf8').replace(/^\uFEFF/, '');
+    return JSON.parse(txt);
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeJSONSafe(file, obj) {
+  const tmp = file + '.tmp';
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  await fsp.writeFile(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+  await fsp.rename(tmp, file);
+}
+
+// -------- Public: settings --------
+app.get('/api/settings', async (_req, res) => {
+  const settings = await readJSONSafe(SETTINGS_FILE, {});
+  res.json(settings);
+});
+
+// -------- Admin guard --------
+function requireAdmin(req, res, next) {
+  const tok = req.header('X-Admin-Token') || '';
+  if (!ADMIN_TOKEN || tok !== ADMIN_TOKEN) {
+    return jsonError(res, 401, 'unauthorized', 'missing or invalid X-Admin-Token');
+  }
+  next();
+}
+
+// -------- Admin: settings --------
+app.get('/api/admin/settings', requireAdmin, async (_req, res) => {
+  const settings = await readJSONSafe(SETTINGS_FILE, {});
+  res.json(settings);
+});
+
+app.put('/api/admin/settings', requireAdmin, async (req, res) => {
+  const incoming = (req.body && typeof req.body === 'object') ? req.body : null;
+  if (!incoming) return jsonError(res, 400, 'bad_request', 'JSON body required');
+  if (!incoming.businessHours || !incoming.slotConfig) {
+    return jsonError(res, 400, 'invalid_settings', { need: ['businessHours', 'slotConfig'] });
+  }
+  try {
+    await writeJSONSafe(SETTINGS_FILE, incoming);
+    res.json({ ok: true, saved: true });
+  } catch (e) {
+    jsonError(res, 500, 'persist_failed', String(e && e.message || e));
+  }
+});
+
+// -------- Geocode (UK postcode normaliser + optional Google) --------
+/**
+ * GET /api/geocode?postcode=PE8%204QU
+ * Returns { results: [ { formatted_address, geometry:{location:{lat,lng}} } ] }
+ * If no GOOGLE_MAPS_API_KEY, returns { results: [] } (frontend can still proceed).
+ */
+app.get('/api/geocode', async (req, res) => {
+  const raw = (req.query.postcode || req.query.q || '').toString().trim();
+  if (!raw) return res.json({ results: [] });
+
+  const up = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // permissive UK postcode pattern: (outward 2–4 chars)(inward 3 chars)
+  const m = up.match(/^([A-Z]{1,2}\d[A-Z0-9]?\d[A-Z]{2})$/);
+  if (!m) return res.json({ results: [] });
+
+  const norm = up.replace(/(\d[A-Z]{2})$/, ' $1');
+
+  if (!GOOGLE_MAPS_API_KEY) {
+    return res.json({ results: [] });
+  }
+
+  try {
+    const qs = new URLSearchParams({
+      address: norm,
+      components: 'country:GB',
+      key: GOOGLE_MAPS_API_KEY
+    });
+    const url = 'https://maps.googleapis.com/maps/api/geocode/json?' + qs.toString();
+    const r = await fetch(url);
+    const j = await r.json();
+    if (!j || !Array.isArray(j.results)) return res.json({ results: [] });
+
+    const trimmed = j.results.map(r => ({
+      formatted_address: r.formatted_address,
+      geometry: r.geometry && r.geometry.location ? { location: r.geometry.location } : undefined
+    })).filter(x => x.geometry && x.geometry.location);
+
+    res.json({ results: trimmed });
+  } catch {
+    res.json({ results: [] });
+  }
+});
+
+// -------- 404 JSON --------
+app.use((req, res) => jsonError(res, 404, 'not_found', req.method + ' ' + req.url));
+
+// -------- Listen --------
+app.listen(PORT, '127.0.0.1', () => {
+  console.log(`admin-overlay listening on 127.0.0.1:${PORT} (DATA_DIR=${DATA_DIR})`);
+});

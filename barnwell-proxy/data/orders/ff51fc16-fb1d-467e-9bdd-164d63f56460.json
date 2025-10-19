@@ -1,0 +1,32 @@
+{
+  "order_ref": "ff51fc16-fb1d-467e-9bdd-164d63f56460",
+  "created_at": "2025-10-05T23:29:29.379Z",
+  "payload": {
+    "items": [
+      {
+        "name": "Test item",
+        "quantity": 1,
+        "unit_pence": 100
+      }
+    ],
+    "delivery_fee_pence": 0,
+    "currency": "GBP",
+    "title": "Barnwell Grill Order",
+    "meta": {
+      "fulfilment": "collection",
+      "scheduled_at": null,
+      "customer": {
+        "name": "Test",
+        "phone": "+447700900123"
+      }
+    }
+  },
+  "printable_receipt": "                             ORDER\nORDER TYPE = COLLECTION\nORDER DATE = ASAP\n\nName: Test\nPhone: +447700900123\n\n---------------------------------------------------------------\nTest item                                                 £1.00\n---------------------------------------------------------------\nSUBTOTAL:                                                 £1.00\nDELIVERY FEE:                                             £0.00\nTOTAL:                                                    £1.00\n",
+  "total_pence": 100,
+  "sentToPrinter": true,
+  "payment": {
+    "method": "cash",
+    "status": "UNPAID"
+  },
+  "contactKey": "a8acc3a90a7b4e4dc65e93db9240ed26523050ef754d63b75b5161de76781436"
+}

@@ -1,0 +1,84 @@
+{
+  "merchant_id": "MLRVNNTQGEETM",
+  "type": "payment.updated",
+  "event_id": "5d65cfd2-ad22-38ff-aa93-19248a13e34a",
+  "created_at": "2025-10-11T22:44:15.539Z",
+  "data": {
+    "type": "payment",
+    "id": "NkdLw15T2UuG86VAj0wrZGcq5UTZY",
+    "object": {
+      "payment": {
+        "amount_money": {
+          "amount": 110,
+          "currency": "GBP"
+        },
+        "application_details": {
+          "application_id": "sq0idp-w46nJ_NCNDMSOywaCY0mwA",
+          "square_product": "ECOMMERCE_API"
+        },
+        "approved_money": {
+          "amount": 110,
+          "currency": "GBP"
+        },
+        "billing_address": {
+          "first_name": "Richard",
+          "last_name": "Dowman"
+        },
+        "buyer_email_address": "r.dowman@eazi-apps.co.uk",
+        "card_details": {
+          "auth_result_code": "013973",
+          "avs_status": "AVS_ACCEPTED",
+          "card": {
+            "bin": "446291",
+            "card_brand": "VISA",
+            "card_type": "DEBIT",
+            "exp_month": 3,
+            "exp_year": 2029,
+            "fingerprint": "sq-1-DA5XBj1lCSdxU4G9YqBpuE1tWpoXc65qchGCkyRSSpRp6S1Qt9H2HIKI0963HjaEwQ",
+            "last_4": "4817",
+            "payment_account_reference": "V0010013825052446887573544833",
+            "prepaid_type": "NOT_PREPAID"
+          },
+          "card_payment_timeline": {
+            "authorized_at": "2025-10-11T22:44:11.522Z",
+            "captured_at": "2025-10-11T22:44:11.808Z"
+          },
+          "cvv_status": "CVV_ACCEPTED",
+          "entry_method": "KEYED",
+          "statement_description": "SQ *BARNWELL PIZZA AND G",
+          "status": "CAPTURED"
+        },
+        "created_at": "2025-10-11T22:44:11.095Z",
+        "customer_id": "RPT0P9SP1YMSVT5J6W08C7XKC4",
+        "delay_action": "CANCEL",
+        "delay_duration": "PT168H",
+        "delayed_until": "2025-10-18T22:44:11.095Z",
+        "id": "NkdLw15T2UuG86VAj0wrZGcq5UTZY",
+        "location_id": "L0R86R4QCD2NF",
+        "order_id": "8fXawAfSMqLIn1kPl5TQ5zu6A9CZY",
+        "receipt_number": "NkdL",
+        "receipt_url": "https://squareup.com/receipt/preview/NkdLw15T2UuG86VAj0wrZGcq5UTZY",
+        "risk_evaluation": {
+          "created_at": "2025-10-11T22:44:11.698Z",
+          "risk_level": "NORMAL"
+        },
+        "shipping_address": {
+          "first_name": "Richard",
+          "last_name": "Dowman"
+        },
+        "source_type": "CARD",
+        "status": "COMPLETED",
+        "tip_money": {
+          "amount": 0,
+          "currency": "GBP"
+        },
+        "total_money": {
+          "amount": 110,
+          "currency": "GBP"
+        },
+        "updated_at": "2025-10-11T22:44:12.180Z",
+        "version": 4
+      }
+    }
+  }
+}

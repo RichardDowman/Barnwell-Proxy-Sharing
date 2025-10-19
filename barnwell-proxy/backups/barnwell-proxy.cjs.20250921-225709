@@ -1,0 +1,602 @@
+#!/usr/bin/env node
+// barnwell-proxy.cjs — Barnwell Grill
+// Endpoints:
+// - GET  /api/health
+// - GET  /api/zones
+// - POST /api/zones/quote      { postcode, basket_pence }
+// - GET  /api/zonesAdminV2     (compat for your admin UI)
+// - GET  /api/admin/settings   (compat for your admin UI)
+// - POST /api/create-checkout-link  (see body below)
+
+require('dotenv').config({ path: '/etc/barnwell-proxy.env' });
+
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const fs = require('fs');
+const path = require('path');                  // <-- make sure this is present
+const { randomUUID } = require('crypto');
+
+// Square SDK: current package exports { Client, Environment, ApiError }
+const square = require('square');
+const { Client, Environment, ApiError } = square;
+
+// -------- Config --------
+const PORT = Number(process.env.PORT || 8080);
+const ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN;
+const SQUARE_ENV = (process.env.SQUARE_ENV || 'production').toLowerCase(); // 'sandbox' or 'production'
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || '').trim();
+const STATIC_LOCATION_ID = (process.env.SQUARE_LOCATION_ID || '').trim();
+
+if (!ACCESS_TOKEN) {
+  console.error('Missing SQUARE_ACCESS_TOKEN in /etc/barnwell-proxy.env');
+  process.exit(1);
+}
+
+// -------- Square client --------
+const client = new Client({
+  accessToken: ACCESS_TOKEN,
+  environment: SQUARE_ENV === 'sandbox' ? Environment.Sandbox : Environment.Production,
+});
+
+// prefer env location if provided
+async function getLocationId() {
+  if (STATIC_LOCATION_ID) {
+    console.log(`Using Square Location from env: ${STATIC_LOCATION_ID}`);
+    return STATIC_LOCATION_ID;
+  }
+  const { locationsApi } = client;
+  const res = await locationsApi.listLocations();
+  const active = (res.result.locations || []).find(l => l.status === 'ACTIVE');
+  return active ? active.id : (res.result.locations?.[0]?.id);
+}
+
+// -------- ZONES (file-backed) --------
+const DATA_DIR = path.join(__dirname, 'data');
+const ZONES_PATH = path.join(DATA_DIR, 'zones.json');
+
+function ensureZonesFile() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(ZONES_PATH)) {
+      const seed = {
+        currency: 'GBP',
+        zones: [
+          { name: 'Local (PE8 core)', postcode_prefixes: ['PE8 4', 'PE8 5'], delivery_fee_pence: 250, min_order_pence: 1000 },
+          { name: 'Nearby',           postcode_prefixes: ['PE8', 'PE7 3', 'PE7 1', 'PE9 4'], delivery_fee_pence: 400, min_order_pence: 2000 },
+          { name: 'Farther',          postcode_prefixes: ['PE7', 'PE9'], delivery_fee_pence: 600, min_order_pence: 3000 },
+        ],
+      };
+      fs.writeFileSync(ZONES_PATH, JSON.stringify(seed, null, 2));
+    }
+  } catch (e) {
+    console.error('Failed to ensure zones file:', e);
+  }
+}
+ensureZonesFile();
+
+function loadZones() {
+  try {
+    const raw = fs.readFileSync(ZONES_PATH, 'utf8');
+    return JSON.parse(raw);
+  } catch (e) {
+    return { currency: 'GBP', zones: [] };
+  }
+}
+
+function normalisePostcode(pc) {
+  return String(pc || '').toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
+function quoteForPostcode(zonesJson, postcode, basket_pence) {
+  const pc = normalisePostcode(postcode);
+  const { zones, currency } = zonesJson;
+
+  const match = zones.find(z => (z.postcode_prefixes || []).some(pref => pc.startsWith(pref.toUpperCase())));
+  if (!match) return { ok: false, currency, reason: 'OUT_OF_AREA' };
+
+  const meetsMin = typeof match.min_order_pence === 'number' ? (basket_pence >= match.min_order_pence) : true;
+  return {
+    ok: meetsMin,
+    currency,
+    zone: match,
+    delivery_fee_pence: match.delivery_fee_pence,
+    min_order_pence: match.min_order_pence || 0,
+    reason: meetsMin ? undefined : 'BELOW_MINIMUM',
+  };
+}
+
+// -------- Receipt formatting --------
+function ordinalDay(d) {
+  const n = d.getDate();
+  const s = ['th','st','nd','rd']; const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+function formatRequested(iso) {
+  try {
+    const d = new Date(iso);
+    const day = ordinalDay(d);
+    const month = d.toLocaleString('en-GB', { month: 'short' });
+    const time = d.toLocaleString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: false });
+    return `${day} ${month} ${time}`;
+  } catch { return ''; }
+}
+function padMoney(pence) {
+  return `£${(pence/100).toFixed(2)}`;
+}
+function leftRight(lineL, lineR, width = 63) {
+  const l = String(lineL ?? '');
+  const r = String(lineR ?? '');
+  const dots = Math.max(1, width - l.length - r.length);
+  return l + ' '.repeat(dots) + r;
+}
+function renderReceipt(payload) {
+  const {
+    meta = {},
+    customer = {},
+    items = [],
+    currency = 'GBP',
+    delivery_fee_pence = 0,
+  } = payload;
+
+  const fulfil = String(meta.fulfilment || '').toUpperCase(); // DELIVERY / COLLECTION
+  const fulfilHdr = fulfil || 'ORDER';
+  const requested = meta.requested_at ? `\n                  Requested: ${formatRequested(meta.requested_at)}` : '';
+
+  const lines = [];
+  lines.push(leftRight(`                           ${fulfilHdr}`, ''));
+  if (requested) lines.push(requested);
+
+  const addrLines = (customer.address_lines || []);
+  lines.push('');
+  lines.push(`Name:   ${customer.name || ''}`);
+  lines.push(`Phone:  ${customer.phone || ''}`);
+  if (addrLines.length) {
+    lines.push(`Address: ${addrLines[0] || ''}`);
+    for (let i = 1; i < addrLines.length; i++) lines.push(`         ${addrLines[i] || ''}`);
+  }
+
+  lines.push('---------------------------------------------------------------');
+
+  let subtotal = 0;
+  for (const it of items) {
+    const qty = Number(it.quantity || 1);
+    const unit = Number(it.unit_pence || 0);
+    const modsExtra = (it.modifiers || []).reduce((sum, m) => sum + Number(m.extra_pence || 0), 0);
+    const linePence = qty * (unit + modsExtra);
+    subtotal += linePence;
+
+    const title = `${it.name || 'Item'}`;
+    lines.push(leftRight(title, padMoney(linePence)));
+
+    if (it.variant && (it.variant.group || it.variant.choice)) {
+      lines.push(`${String(it.variant.group || '').toUpperCase()}: ${it.variant.choice || ''}`);
+    }
+    for (const m of (it.modifiers || [])) {
+      const group = String(m.group || '').toUpperCase();
+      const choices = Array.isArray(m.choices) ? m.choices.join(', ') : '';
+      if (group || choices) lines.push(`${group}: ${choices}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('---------------------------------------------------------------');
+  lines.push(leftRight('SUBTOTAL:', padMoney(subtotal)));
+  if (delivery_fee_pence) lines.push(leftRight('DELIVERY FEE:', padMoney(delivery_fee_pence)));
+  lines.push(leftRight('TOTAL:', padMoney(subtotal + Number(delivery_fee_pence || 0))));
+
+  return lines.join('\n');
+}
+
+// Pick the supported create-link method on this SDK
+function pickCreateLinkMethod() {
+  if (client.checkoutApi && typeof client.checkoutApi.createPaymentLink === 'function') {
+    return async (body) => client.checkoutApi.createPaymentLink(body);
+  }
+  throw new Error('No compatible checkout/payment link method found on this Square SDK.');
+}
+
+// -------- Server --------
+const app = express();
+app.use(bodyParser.json({ limit: '1mb' }));
+
+// CORS
+const corsOptions = {
+  origin(origin, cb) {
+    if (!origin || CORS_ORIGINS === '') return cb(null, true); // allow all when empty
+    const allow = CORS_ORIGINS.split(',').map(s => s.trim()).filter(Boolean);
+    if (allow.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+};
+app.use(cors(corsOptions));
+
+// Health
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, env: SQUARE_ENV });
+});
+
+// Zones (public)
+app.get('/api/zones', (req, res) => {
+  res.json(loadZones());
+});
+app.post('/api/zones/quote', (req, res) => {
+  try {
+    const { postcode, basket_pence } = req.body || {};
+    const out = quoteForPostcode(loadZones(), postcode, Number(basket_pence || 0));
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err && err.message || err) });
+  }
+});
+
+// ---- Admin shims (compat for your UIs) ----
+app.get('/api/zonesAdminV2', (req, res) => {
+  const z = loadZones();
+  res.json({ ok: true, currency: z.currency, zones: z.zones });
+});
+
+app.get('/api/admin/settings', (req, res) => {
+  res.json({
+    ok: true,
+    store: { name: 'Barnwell Grill', currency: 'GBP', deliveryEnabled: true },
+  });
+});
+
+// ---- Create checkout link ----
+app.post('/api/create-checkout-link', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const locationId = await getLocationId();
+
+    const lineItems = (payload.items || []).map((it) => {
+      const qty = String(it.quantity || 1);
+      const base = Number(it.unit_pence || 0);
+      const modsExtra = (it.modifiers || []).reduce((sum, m) => sum + Number(m.extra_pence || 0), 0);
+      const totalPerUnit = base + modsExtra;
+
+      return {
+        name: it.name || 'Item',
+        quantity: qty,
+        basePriceMoney: {
+          amount: BigInt(totalPerUnit),
+          currency: payload.currency || 'GBP',
+        },
+      };
+    });
+
+    // With quickPay you pass a single price; we sum the line totals.
+    const orderIdempotencyKey = randomUUID();
+    const quickTotal = lineItems.reduce(
+      (s, li) => BigInt(s) + (BigInt(li.basePriceMoney.amount) * BigInt(li.quantity || 1)),
+      BigInt(0)
+    );
+
+    const checkoutBody = {
+      idempotencyKey: orderIdempotencyKey,
+      quickPay: {
+        name: payload.title || 'Barnwell Grill Order',
+        priceMoney: { amount: quickTotal, currency: payload.currency || 'GBP' },
+        locationId,
+      },
+    };
+
+    const createLink = pickCreateLinkMethod();
+    const resp = await createLink(checkoutBody);
+    const url = resp.result?.paymentLink?.url || resp.result?.checkout?.checkoutPageUrl;
+
+    const printable_receipt = renderReceipt(payload);
+    res.json({ ok: true, url, location_id: locationId, printable_receipt });
+  } catch (err) {
+    console.error('Server error:', err);
+    const code = err instanceof ApiError ? err.statusCode : undefined;
+    res.status(500).json({ ok: false, error: String(err && (err.message || err)), code });
+  }
+});
+
+// Start
+app.listen(PORT, () => {
+  console.log(`barnwell-proxy listening on :${PORT}`);
+});
+EEOF
+sudo tee /var/www/barnwell-proxy/barnwell-proxy.cjs >/dev/null <<'EOF'
+#!/usr/bin/env node
+// barnwell-proxy.cjs — Barnwell Grill
+// Endpoints:
+// - GET  /api/health
+// - GET  /api/zones
+// - POST /api/zones/quote      { postcode, basket_pence }
+// - GET  /api/zonesAdminV2     (compat for your admin UI)
+// - GET  /api/admin/settings   (compat for your admin UI)
+// - POST /api/create-checkout-link  (see body below)
+
+require('dotenv').config({ path: '/etc/barnwell-proxy.env' });
+
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const fs = require('fs');
+const path = require('path');                  // <-- make sure this is present
+const { randomUUID } = require('crypto');
+
+// Square SDK: current package exports { Client, Environment, ApiError }
+const square = require('square');
+const { Client, Environment, ApiError } = square;
+
+// -------- Config --------
+const PORT = Number(process.env.PORT || 8080);
+const ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN;
+const SQUARE_ENV = (process.env.SQUARE_ENV || 'production').toLowerCase(); // 'sandbox' or 'production'
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || '').trim();
+const STATIC_LOCATION_ID = (process.env.SQUARE_LOCATION_ID || '').trim();
+
+if (!ACCESS_TOKEN) {
+  console.error('Missing SQUARE_ACCESS_TOKEN in /etc/barnwell-proxy.env');
+  process.exit(1);
+}
+
+// -------- Square client --------
+const client = new Client({
+  accessToken: ACCESS_TOKEN,
+  environment: SQUARE_ENV === 'sandbox' ? Environment.Sandbox : Environment.Production,
+});
+
+// prefer env location if provided
+async function getLocationId() {
+  if (STATIC_LOCATION_ID) {
+    console.log(`Using Square Location from env: ${STATIC_LOCATION_ID}`);
+    return STATIC_LOCATION_ID;
+  }
+  const { locationsApi } = client;
+  const res = await locationsApi.listLocations();
+  const active = (res.result.locations || []).find(l => l.status === 'ACTIVE');
+  return active ? active.id : (res.result.locations?.[0]?.id);
+}
+
+// -------- ZONES (file-backed) --------
+const DATA_DIR = path.join(__dirname, 'data');
+const ZONES_PATH = path.join(DATA_DIR, 'zones.json');
+
+function ensureZonesFile() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(ZONES_PATH)) {
+      const seed = {
+        currency: 'GBP',
+        zones: [
+          { name: 'Local (PE8 core)', postcode_prefixes: ['PE8 4', 'PE8 5'], delivery_fee_pence: 250, min_order_pence: 1000 },
+          { name: 'Nearby',           postcode_prefixes: ['PE8', 'PE7 3', 'PE7 1', 'PE9 4'], delivery_fee_pence: 400, min_order_pence: 2000 },
+          { name: 'Farther',          postcode_prefixes: ['PE7', 'PE9'], delivery_fee_pence: 600, min_order_pence: 3000 },
+        ],
+      };
+      fs.writeFileSync(ZONES_PATH, JSON.stringify(seed, null, 2));
+    }
+  } catch (e) {
+    console.error('Failed to ensure zones file:', e);
+  }
+}
+ensureZonesFile();
+
+function loadZones() {
+  try {
+    const raw = fs.readFileSync(ZONES_PATH, 'utf8');
+    return JSON.parse(raw);
+  } catch (e) {
+    return { currency: 'GBP', zones: [] };
+  }
+}
+
+function normalisePostcode(pc) {
+  return String(pc || '').toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
+function quoteForPostcode(zonesJson, postcode, basket_pence) {
+  const pc = normalisePostcode(postcode);
+  const { zones, currency } = zonesJson;
+
+  const match = zones.find(z => (z.postcode_prefixes || []).some(pref => pc.startsWith(pref.toUpperCase())));
+  if (!match) return { ok: false, currency, reason: 'OUT_OF_AREA' };
+
+  const meetsMin = typeof match.min_order_pence === 'number' ? (basket_pence >= match.min_order_pence) : true;
+  return {
+    ok: meetsMin,
+    currency,
+    zone: match,
+    delivery_fee_pence: match.delivery_fee_pence,
+    min_order_pence: match.min_order_pence || 0,
+    reason: meetsMin ? undefined : 'BELOW_MINIMUM',
+  };
+}
+
+// -------- Receipt formatting --------
+function ordinalDay(d) {
+  const n = d.getDate();
+  const s = ['th','st','nd','rd']; const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+function formatRequested(iso) {
+  try {
+    const d = new Date(iso);
+    const day = ordinalDay(d);
+    const month = d.toLocaleString('en-GB', { month: 'short' });
+    const time = d.toLocaleString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: false });
+    return `${day} ${month} ${time}`;
+  } catch { return ''; }
+}
+function padMoney(pence) {
+  return `£${(pence/100).toFixed(2)}`;
+}
+function leftRight(lineL, lineR, width = 63) {
+  const l = String(lineL ?? '');
+  const r = String(lineR ?? '');
+  const dots = Math.max(1, width - l.length - r.length);
+  return l + ' '.repeat(dots) + r;
+}
+function renderReceipt(payload) {
+  const {
+    meta = {},
+    customer = {},
+    items = [],
+    currency = 'GBP',
+    delivery_fee_pence = 0,
+  } = payload;
+
+  const fulfil = String(meta.fulfilment || '').toUpperCase(); // DELIVERY / COLLECTION
+  const fulfilHdr = fulfil || 'ORDER';
+  const requested = meta.requested_at ? `\n                  Requested: ${formatRequested(meta.requested_at)}` : '';
+
+  const lines = [];
+  lines.push(leftRight(`                           ${fulfilHdr}`, ''));
+  if (requested) lines.push(requested);
+
+  const addrLines = (customer.address_lines || []);
+  lines.push('');
+  lines.push(`Name:   ${customer.name || ''}`);
+  lines.push(`Phone:  ${customer.phone || ''}`);
+  if (addrLines.length) {
+    lines.push(`Address: ${addrLines[0] || ''}`);
+    for (let i = 1; i < addrLines.length; i++) lines.push(`         ${addrLines[i] || ''}`);
+  }
+
+  lines.push('---------------------------------------------------------------');
+
+  let subtotal = 0;
+  for (const it of items) {
+    const qty = Number(it.quantity || 1);
+    const unit = Number(it.unit_pence || 0);
+    const modsExtra = (it.modifiers || []).reduce((sum, m) => sum + Number(m.extra_pence || 0), 0);
+    const linePence = qty * (unit + modsExtra);
+    subtotal += linePence;
+
+    const title = `${it.name || 'Item'}`;
+    lines.push(leftRight(title, padMoney(linePence)));
+
+    if (it.variant && (it.variant.group || it.variant.choice)) {
+      lines.push(`${String(it.variant.group || '').toUpperCase()}: ${it.variant.choice || ''}`);
+    }
+    for (const m of (it.modifiers || [])) {
+      const group = String(m.group || '').toUpperCase();
+      const choices = Array.isArray(m.choices) ? m.choices.join(', ') : '';
+      if (group || choices) lines.push(`${group}: ${choices}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('---------------------------------------------------------------');
+  lines.push(leftRight('SUBTOTAL:', padMoney(subtotal)));
+  if (delivery_fee_pence) lines.push(leftRight('DELIVERY FEE:', padMoney(delivery_fee_pence)));
+  lines.push(leftRight('TOTAL:', padMoney(subtotal + Number(delivery_fee_pence || 0))));
+
+  return lines.join('\n');
+}
+
+// Pick the supported create-link method on this SDK
+function pickCreateLinkMethod() {
+  if (client.checkoutApi && typeof client.checkoutApi.createPaymentLink === 'function') {
+    return async (body) => client.checkoutApi.createPaymentLink(body);
+  }
+  throw new Error('No compatible checkout/payment link method found on this Square SDK.');
+}
+
+// -------- Server --------
+const app = express();
+app.use(bodyParser.json({ limit: '1mb' }));
+
+// CORS
+const corsOptions = {
+  origin(origin, cb) {
+    if (!origin || CORS_ORIGINS === '') return cb(null, true); // allow all when empty
+    const allow = CORS_ORIGINS.split(',').map(s => s.trim()).filter(Boolean);
+    if (allow.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+};
+app.use(cors(corsOptions));
+
+// Health
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, env: SQUARE_ENV });
+});
+
+// Zones (public)
+app.get('/api/zones', (req, res) => {
+  res.json(loadZones());
+});
+app.post('/api/zones/quote', (req, res) => {
+  try {
+    const { postcode, basket_pence } = req.body || {};
+    const out = quoteForPostcode(loadZones(), postcode, Number(basket_pence || 0));
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err && err.message || err) });
+  }
+});
+
+// ---- Admin shims (compat for your UIs) ----
+app.get('/api/zonesAdminV2', (req, res) => {
+  const z = loadZones();
+  res.json({ ok: true, currency: z.currency, zones: z.zones });
+});
+
+app.get('/api/admin/settings', (req, res) => {
+  res.json({
+    ok: true,
+    store: { name: 'Barnwell Grill', currency: 'GBP', deliveryEnabled: true },
+  });
+});
+
+// ---- Create checkout link ----
+app.post('/api/create-checkout-link', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const locationId = await getLocationId();
+
+    const lineItems = (payload.items || []).map((it) => {
+      const qty = String(it.quantity || 1);
+      const base = Number(it.unit_pence || 0);
+      const modsExtra = (it.modifiers || []).reduce((sum, m) => sum + Number(m.extra_pence || 0), 0);
+      const totalPerUnit = base + modsExtra;
+
+      return {
+        name: it.name || 'Item',
+        quantity: qty,
+        basePriceMoney: {
+          amount: BigInt(totalPerUnit),
+          currency: payload.currency || 'GBP',
+        },
+      };
+    });
+
+    // With quickPay you pass a single price; we sum the line totals.
+    const orderIdempotencyKey = randomUUID();
+    const quickTotal = lineItems.reduce(
+      (s, li) => BigInt(s) + (BigInt(li.basePriceMoney.amount) * BigInt(li.quantity || 1)),
+      BigInt(0)
+    );
+
+    const checkoutBody = {
+      idempotencyKey: orderIdempotencyKey,
+      quickPay: {
+        name: payload.title || 'Barnwell Grill Order',
+        priceMoney: { amount: quickTotal, currency: payload.currency || 'GBP' },
+        locationId,
+      },
+    };
+
+    const createLink = pickCreateLinkMethod();
+    const resp = await createLink(checkoutBody);
+    const url = resp.result?.paymentLink?.url || resp.result?.checkout?.checkoutPageUrl;
+
+    const printable_receipt = renderReceipt(payload);
+    res.json({ ok: true, url, location_id: locationId, printable_receipt });
+  } catch (err) {
+    console.error('Server error:', err);
+    const code = err instanceof ApiError ? err.statusCode : undefined;
+    res.status(500).json({ ok: false, error: String(err && (err.message || err)), code });
+  }
+});
+
+// Start
+app.listen(PORT, () => {
+  console.log(`barnwell-proxy listening on :${PORT}`);
+});

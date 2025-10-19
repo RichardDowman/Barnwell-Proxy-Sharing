@@ -1,0 +1,3 @@
+BARNWELL TEST PRINT
+
+HTTP exception path test.

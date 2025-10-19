@@ -1,0 +1,140 @@
+import express from "express";
+import fs from "fs/promises";
+import path from "path";
+import iconv from "iconv-lite";
+
+const app = express();
+app.disable("x-powered-by");
+app.set("trust proxy", true);
+app.use(express.json({ limit: "256kb" }));
+
+// ---- config ----
+const PORT = parseInt(process.env.PORT || "8091", 10);
+const DATA_DIR = process.env.DATA_DIR || "/var/www/barnwell-proxy/data";
+const JOBS_DIR = path.join(DATA_DIR, "cloudprnt", "jobs");
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.CLOUDPRNT_SECRET || "";
+
+// helpers
+async function ensureDir(p) { await fs.mkdir(p, { recursive: true }); }
+function money(p) { return `£${(p/100).toFixed(2)}`; }
+
+// Render simple ticket as **CP858 bytes** (ESC R 02 = UK, ESC GS t 03 = CP858)
+function render(job) {
+  const lines = [];
+  lines.push("        New Collection Order");
+  lines.push("           ASAP");
+  lines.push("");
+  lines.push("--------------");
+  if (Array.isArray(job.items)) {
+    for (const it of job.items) {
+      const name = (it.name || "").replace(/\s+/g," ").trim();
+      const qty  = it.quantity || 1;
+      const line = `${name} x${qty}`.slice(0, 32).padEnd(32, " ");
+      const price = (it.unit_pence || 0) * qty;
+      lines.push(`${line}${money(price)}`);
+    }
+  }
+  lines.push("");
+  const subtotal = (job.items||[]).reduce((s,i)=>s + (i.unit_pence||0)*(i.quantity||1), 0);
+  lines.push(`SUBTOTAL:     ${money(subtotal)}`);
+  const del = job.delivery_fee_pence || 0;
+  if (del) lines.push(`DELIVERY FEE: ${money(del)}`);
+  const total = subtotal + del;
+  lines.push(`TOTAL:        ${money(total)}`);
+  lines.push("");
+  // join with CRLF for safety
+  const body = lines.join("\r\n") + "\r\n\x1b\x64\x04"; // print & feed 4 lines
+
+  // prefix with country & codepage selects
+  const header = Buffer.from([0x1b,0x52,0x02, 0x1b,0x1d,0x74,0x03]); // UK + CP858 (0x03)
+  // iconv encodes £ as 0x9C in CP858
+  const encoded = iconv.encode(body, "cp858");
+  return Buffer.concat([header, encoded]);
+}
+
+async function getNextTextJobPath() {
+  await ensureDir(JOBS_DIR);
+  const files = (await fs.readdir(JOBS_DIR)).filter(f => f.endsWith(".txt") && !f.startsWith("_sending_")).sort();
+  return files.length ? path.join(JOBS_DIR, files[0]) : null;
+}
+
+// Serve poll:
+//  - POST returns jobReady + jobFetchUrl (with type=text/plain) and jobDeleteUrl
+//  - GET with ?type=text/plain returns the ticket bytes
+//  - DELETE with ?code=200+OK acknowledges and removes the current job
+app.all("/cloudprnt/poll", async (req, res) => {
+  const key = (req.query.key || "").toString();
+  if (!ADMIN_TOKEN || key !== ADMIN_TOKEN) {
+    return res.status(401).json({ ok:false, error:"unauthorized" });
+  }
+
+  // Derive **public** base URL from incoming request (never 127.0.0.1)
+  const host = (req.headers["x-forwarded-host"] || req.headers["host"] || "").toString();
+  const scheme = "http"; // Star printer is happy with HTTP; avoids TLS cert issues
+  const baseUrl = `${scheme}://${host}`;
+
+  // FETCH path (printer GETs the bytes)
+  if (req.method === "GET" && (req.query.type || "") === "text/plain") {
+    const jobPath = await getNextTextJobPath();
+    if (!jobPath) return res.status(204).end();
+
+    // mark as sending to avoid duplicate races
+    const sending = path.join(JOBS_DIR, "_sending_" + path.basename(jobPath));
+    try { await fs.rename(jobPath, sending); } catch {}
+    const data = await fs.readFile(sending);
+    res.set("Content-Type", "text/plain");
+    return res.send(data);
+  }
+
+  // ACK path (printer DELETEs when printed)
+  if (req.method === "DELETE") {
+    const code = (req.query.code || "").toString();
+    if (!/^200(?:\s|%20)?OK$/i.test(code)) {
+      return res.json({ ok:false, deleted:0 });
+    }
+    // delete the _sending_ file if present, else delete the top job
+    const sendingList = (await fs.readdir(JOBS_DIR)).filter(f => f.startsWith("_sending_") && f.endsWith(".txt")).sort();
+    if (sendingList.length) {
+      await fs.unlink(path.join(JOBS_DIR, sendingList[0])).catch(()=>{});
+      return res.json({ ok:true, deleted:1 });
+    }
+    const jobPath = await getNextTextJobPath();
+    if (jobPath) { await fs.unlink(jobPath).catch(()=>{}); return res.json({ ok:true, deleted:1 }); }
+    return res.json({ ok:false, deleted:0 });
+  }
+
+  // POLL (POST): advertise availability
+  if (req.method === "POST") {
+    const jobPath = await getNextTextJobPath();
+    if (!jobPath) return res.status(204).end();
+
+    const fetchUrl  = `${baseUrl}/cloudprnt/poll?type=text/plain&key=${encodeURIComponent(key)}`;
+    const deleteUrl = `${baseUrl}/cloudprnt/poll?code=200+OK&key=${encodeURIComponent(key)}`;
+    const reply = {
+      jobReady   : true,
+      mediaTypes : ["text/plain", "text/plain; charset=cp858"],
+      contentType: "text/plain; charset=cp858",
+      jobFetchUrl: fetchUrl,
+      deleteMethod: "DELETE",
+      jobDeleteUrl: deleteUrl,
+      jobId: path.basename(jobPath, ".txt")
+    };
+    return res.json(reply);
+  }
+
+  // otherwise: no job
+  return res.status(204).end();
+});
+
+// Admin: enqueue-local for testing (renders CP858 server-side)
+app.post("/cloudprnt/enqueue-local", async (req, res) => {
+  if ((req.get("X-Admin-Token")||"") !== ADMIN_TOKEN) return res.status(401).json({ ok:false, error:"unauthorized" });
+  const buf = render(req.body || {});
+  await ensureDir(JOBS_DIR);
+  const id = String(Date.now());
+  const out = path.join(JOBS_DIR, `${id}.txt`);
+  await fs.writeFile(out, buf);
+  return res.json({ ok:true, jobId:id, bytes:buf.length });
+});
+
+app.listen(PORT, () => console.log(`cloudprnt listening on :${PORT} jobs=${JOBS_DIR}`));

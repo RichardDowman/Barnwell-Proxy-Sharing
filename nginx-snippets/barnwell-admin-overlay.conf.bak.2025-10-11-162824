@@ -1,0 +1,85 @@
+# ===== Barnwell admin overlay + zones CORS =====
+
+# Delivery Zones Admin v2 -> overlay (:8082)
+location = /api/zonesAdminV2 {
+    # CORS preflight
+    if ($request_method = OPTIONS) {
+        add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io";
+        add_header Access-Control-Allow-Methods "GET,OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type, X-Admin-Token, x-admin-token";
+        add_header Vary "Origin";
+        add_header Content-Length "0";
+        add_header Content-Type "text/plain; charset=utf-8";
+        return 204;
+    }
+    # Actual GET
+    add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io" always;
+    add_header Vary "Origin" always;
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+}
+
+# Admin settings -> overlay (:8082)
+location = /api/admin/settings {
+    if ($request_method = OPTIONS) {
+        add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io";
+        add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type, X-Admin-Token, x-admin-token";
+        add_header Vary "Origin";
+        add_header Content-Length "0";
+        add_header Content-Type "text/plain; charset=utf-8";
+        return 204;
+    }
+    add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io" always;
+    add_header Vary "Origin" always;
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+}
+
+# Other admin endpoints -> overlay
+location /api/admin/ {
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+}
+
+# Public settings -> overlay
+location = /api/settings {
+    if ($request_method = OPTIONS) {
+        add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io";
+        add_header Access-Control-Allow-Methods "GET,OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type";
+        add_header Vary "Origin";
+        add_header Content-Length "0";
+        add_header Content-Type "text/plain; charset=utf-8";
+        return 204;
+    }
+    add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io" always;
+    add_header Vary "Origin" always;
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+}
+
+# Geocode -> overlay
+location = /api/geocode {
+    if ($request_method = OPTIONS) {
+        add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io";
+        add_header Access-Control-Allow-Methods "GET,OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type";
+        add_header Vary "Origin";
+        add_header Content-Length "0";
+        add_header Content-Type "text/plain; charset=utf-8";
+        return 204;
+    }
+    add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io" always;
+    add_header Vary "Origin" always;
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+}
+
+# Root health -> overlay (PWA SW uses this)
+location = /health {
+    add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io" always;
+    add_header Vary "Origin" always;
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+}

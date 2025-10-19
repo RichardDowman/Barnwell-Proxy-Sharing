@@ -1,0 +1,14 @@
+# Overlay routes must be parsed before generic /api/* proxy
+location = /api/admin/settings { proxy_pass http://127.0.0.1:8082; proxy_set_header Host $host; }
+location  /api/admin/         { proxy_pass http://127.0.0.1:8082; proxy_set_header Host $host; }
+location = /api/settings       { proxy_pass http://127.0.0.1:8082; proxy_set_header Host $host; }
+location = /api/geocode        { proxy_pass http://127.0.0.1:8082; proxy_set_header Host $host; }
+location = /api/zonesAdminV2   { proxy_pass http://127.0.0.1:8082; proxy_set_header Host $host; }
+
+# Root health (used by SW checks)
+location = /health {
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+    add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io" always;
+    add_header Vary "Origin" always;
+}

@@ -1,0 +1,57 @@
+{
+  "order_ref": "dd617da5-1214-4bdd-b68c-e685f1da584a",
+  "created_at": "2025-10-03T11:00:01.445Z",
+  "payload": {
+    "items": [
+      {
+        "name": "9\" Cheese & Tomato Ⓥ  APP TEST ITEM",
+        "quantity": 1,
+        "unit_pence": 100,
+        "groups": [
+          {
+            "name": "Size",
+            "values": [
+              "Regular £1.00"
+            ]
+          },
+          {
+            "name": "Crust",
+            "values": [
+              "Thin Crust"
+            ]
+          },
+          {
+            "name": "Pizza Base",
+            "values": [
+              "Tomato"
+            ]
+          },
+          {
+            "name": "Add Stuffed Crust",
+            "values": [
+              "No"
+            ]
+          }
+        ]
+      }
+    ],
+    "delivery_fee_pence": 10,
+    "currency": "GBP",
+    "title": "Barnwell Grill Order",
+    "meta": {
+      "fulfilment": "delivery",
+      "scheduled_at": "2025-10-03T12:00:00.000Z",
+      "address": "Oundle, Corby and East Northamptonshire, PE8 4QU, East Midlands, England",
+      "customer": {
+        "name": "Richard Dowman",
+        "phone": "+447789770210",
+        "email": "r.dowman@eazi-apps.co.uk"
+      }
+    }
+  },
+  "printable_receipt": "                             ORDER\nORDER TYPE = DELIVERY\nORDER DATE = 3rd Oct @ 12:00\n\nName: Richard Dowman\nPhone: +447789770210\nAddress: Oundle, Corby and East Northamptonshire, PE8 4QU, East Midlands, England\n\n---------------------------------------------------------------\n9\" Cheese & Tomato Ⓥ  APP TEST ITEM                       £1.00\nSize: Regular £1.00\nCrust: Thin Crust\nPizza Base: Tomato\nAdd Stuffed Crust: No\n---------------------------------------------------------------\nSUBTOTAL:                                                 £1.00\nDELIVERY FEE:                                             £0.10\nTOTAL:                                                    £1.10\n",
+  "payment_link_id": "EQHILRPE3UQGWKSY",
+  "payment_link_url": "https://square.link/u/KLQKxooP",
+  "total_pence": 110,
+  "sentToPrinter": false
+}

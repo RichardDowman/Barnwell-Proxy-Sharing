@@ -1,0 +1,387 @@
+#!/usr/bin/env node
+/**
+ * Barnwell Grill Proxy — Orders + Webhook + Goodcom Cloud Print queue
+ * - Keeps your existing endpoints
+ * - Persists orders in DATA_DIR/orders
+ * - Webhook matches payment, then enqueues printable_receipt into DATA_DIR/printer/queue
+ * - Goodcom polls GET /api/printer-feed.txt (returns one job, plain text)
+ * - Optional admin test: POST /api/admin/print-test  (X-Admin-Token)
+ *
+ * ENV (in /etc/barnwell-proxy.env):
+ *   PORT=8080
+ *   DATA_DIR=/var/www/barnwell-proxy/data
+ *   ADMIN_TOKEN=2025BARNWELLAPP      # already set in your systemd drop-in
+ *   CORS_ORIGINS=https://barnwellgrill.gbapps.cmslogin.io
+ *   SQUARE_ENV=production
+ *   SQUARE_ACCESS_TOKEN=...
+ *   SQUARE_LOCATION_ID=L0R86R4QCD2NF
+ *   CHECKOUT_RETURN_URL=https://barnwellgrill.gbapps.cmslogin.io/ordering?paid=1
+ *   SQUARE_WEBHOOK_SIGNATURE_KEY=... (already set)
+ *   # Optional printer token – if set, Goodcom must call /api/printer-feed.txt?token=THIS
+ *   PRINTER_TOKEN=  (leave empty to disable)
+ */
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const express = require('express');
+
+/* ------- ENV LOADER (from /etc/barnwell-proxy.env) ------- */
+(function loadEnvFile() {
+  try {
+    const p = '/etc/barnwell-proxy.env';
+    if (fs.existsSync(p)) {
+      const txt = fs.readFileSync(p, 'utf8');
+      for (const line of txt.split(/\r?\n/)) {
+        const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+        if (!m) continue;
+        const k = m[1]; let v = m[2];
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1,-1);
+        if (!(k in process.env)) process.env[k] = v;
+      }
+    }
+  } catch {}
+})();
+
+/* ------- CONFIG ------- */
+const PORT = parseInt(process.env.PORT || '8080', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const ORDERS_DIR = path.join(DATA_DIR, 'orders');
+const PRINTER_DIR = path.join(DATA_DIR, 'printer');
+const QUEUE_DIR = path.join(PRINTER_DIR, 'queue');
+const DONE_DIR = path.join(PRINTER_DIR, 'done');
+
+const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || 'https://barnwellgrill.gbapps.cmslogin.io')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
+const SQUARE_ENV = (process.env.SQUARE_ENV || 'production').toLowerCase();
+const SQUARE_BASE = SQUARE_ENV === 'sandbox' ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
+const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN || '';
+const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID || '';
+const CHECKOUT_RETURN_URL = process.env.CHECKOUT_RETURN_URL || process.env.ORDERING_RETURN_URL ||
+  'https://barnwellgrill.gbapps.cmslogin.io/ordering?paid=1';
+const SQUARE_WEBHOOK_SIGNATURE_KEY = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || '';
+const PRINTER_TOKEN = (process.env.PRINTER_TOKEN || '').trim();
+
+/* ------- FS bootstrap ------- */
+for (const d of [DATA_DIR, ORDERS_DIR, PRINTER_DIR, QUEUE_DIR, DONE_DIR]) {
+  try { fs.mkdirSync(d, { recursive: true }); } catch {}
+}
+
+/* ------- HELPERS ------- */
+const fetch = global.fetch || ((...a) => Promise.reject(new Error('fetch not available')));
+const readJSON = (f, fb=null) => { try { return JSON.parse(fs.readFileSync(f,'utf8')); } catch { return fb; } };
+const writeJSON = (f,o) => fs.writeFileSync(f, JSON.stringify(o,null,2));
+const clamp = (n,min,max)=>Math.max(min,Math.min(max,n));
+const money = (p)=>'£'+(Number(p||0)/100).toFixed(2);
+const nowISO = ()=> new Date().toISOString();
+
+function setCors(req,res){
+  const origin = req.headers.origin || '';
+  if (!origin) { res.setHeader('Access-Control-Allow-Origin','*'); return; }
+  if (CORS_ORIGINS.includes(origin)) { res.setHeader('Access-Control-Allow-Origin',origin); res.setHeader('Vary','Origin'); }
+  else { res.setHeader('Access-Control-Allow-Origin', CORS_ORIGINS[0] || '*'); res.setHeader('Vary','Origin'); }
+}
+function cors(req,res,next){
+  setCors(req,res);
+  res.setHeader('Access-Control-Allow-Headers','Content-Type, Authorization, X-Admin-Token, ngrok-skip-browser-warning, x-square-signature, x-square-hmacsha256-signature');
+  res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+}
+function normalizePhoneUK(phone){
+  if (!phone) return '';
+  let s = String(phone).replace(/[().\-\s]/g,'');
+  if (s.startsWith('00')) s = '+'+s.slice(2);
+  if (/^0\d{9,10}$/.test(s)) s = '+44'+s.slice(1);
+  if (/^\d{10,11}$/.test(s)) s = '+44'+s;
+  if (/^\+\d{7,15}$/.test(s)) return s;
+  const d = s.replace(/\D/g,'');
+  if (/^\d{10,11}$/.test(d)) return '+44'+d;
+  if (/^\d{7,15}$/.test(d)) return '+'+d;
+  return '';
+}
+function splitNameForSquare(full){
+  if (!full) return {given_name:'',family_name:''};
+  const parts = String(full).trim().split(/\s+/);
+  return parts.length===1 ? {given_name:parts[0], family_name:''} : {given_name:parts[0], family_name:parts.slice(1).join(' ')};
+}
+
+/* Receipt (63 chars, with groups) */
+function buildReceipt(payload){
+  const width=63, dash='-'.repeat(width);
+  const items = Array.isArray(payload.items)?payload.items:[];
+  const fee = clamp(Number(payload.delivery_fee_pence||0),0,10_000_000);
+  const meta = payload.meta||{}, customer = meta.customer||{};
+  const fulfil = (meta.fulfilment||'collection').toLowerCase();
+  const sch = meta.scheduled_at ? new Date(meta.scheduled_at) : null;
+  let dateStr='ASAP';
+  if (sch && !isNaN(sch)) {
+    const d=sch.getDate(), m=sch.toLocaleString('default',{month:'short'}), hh=String(sch.getHours()).padStart(2,'0'), mm=String(sch.getMinutes()).padStart(2,'0');
+    let ord='th'; if (![11,12,13].includes(d%100)){ if(d%10===1)ord='st'; else if(d%10===2)ord='nd'; else if(d%10===3)ord='rd'; }
+    dateStr=`${d}${ord} ${m} @ ${hh}:${mm}`;
+  }
+  const lines=[];
+  lines.push('                             ORDER');
+  lines.push(`ORDER TYPE = ${fulfil.toUpperCase()}`);
+  lines.push(`ORDER DATE = ${dateStr}`);
+  lines.push('');
+  lines.push(`Name: ${customer.name||''}`);
+  lines.push(`Phone: ${customer.phone||''}`);
+  if (fulfil==='delivery' && meta.address) lines.push(`Address: ${meta.address}`);
+  lines.push(''); lines.push(dash);
+
+  for (const it of items){
+    const qty=Number(it.quantity||1)||1, unit=Number(it.unit_pence||0)||0, total=qty*unit;
+    const name=String(it.name||'Item'), title=qty>1?`${name} (+${qty-1})`:name, price=money(total);
+    const left=width - price.length;
+    lines.push((title.length>left?title.slice(0,left):title).padEnd(left,' ') + price);
+    if (Array.isArray(it.groups)) {
+      for (const g of it.groups) {
+        if (!g || !g.name) continue;
+        const vals = Array.isArray(g.values)?g.values.filter(Boolean):[];
+        if (!vals.length) continue;
+        lines.push(`${g.name}: ${vals.join(', ')}`);
+      }
+    }
+    lines.push(dash);
+  }
+  const subtotal = items.reduce((s,it)=>s+(Number(it.unit_pence||0)*(Number(it.quantity||1)||1)),0);
+  const total = subtotal + fee;
+  const tot = (label,amt)=> {
+    const lbl = label.toUpperCase()+':', amtTxt=money(amt);
+    const space = width - lbl.length - amtTxt.length;
+    return lbl + (space>0?' '.repeat(space):' ') + amtTxt;
+  };
+  lines.push(tot('SUBTOTAL',subtotal));
+  lines.push(tot('DELIVERY FEE',fee));
+  lines.push(tot('TOTAL',total));
+  lines.push('');
+  return lines.join('\n');
+}
+
+/* -------- EXPRESS -------- */
+const app = express();
+app.use(express.json({ limit: '2mb' }));
+app.use(cors);
+
+/* -------- BASIC ROUTES (existing) -------- */
+app.get('/api/health',(req,res)=>{ setCors(req,res); res.json({ok:true, env:SQUARE_ENV}); });
+
+/* Minimal file-backed settings + zones for compatibility */
+const settingsFile = path.join(DATA_DIR,'settings.json');
+const zonesFile = path.join(DATA_DIR,'zones.json');
+if (!fs.existsSync(settingsFile)) writeJSON(settingsFile,{});
+if (!fs.existsSync(zonesFile)) writeJSON(zonesFile,{zones:[]});
+
+app.get('/api/settings',(req,res)=>{ setCors(req,res); const j=readJSON(settingsFile,{}); res.json({
+  businessHours:j.businessHours||{}, slotConfig:j.slotConfig||{},
+  manualClose:j.manualClose||{closed:false,reopenAt:null},
+  manualClosed:!!(j.manualClose&&j.manualClose.closed),
+  reopenAt:j.manualClose?j.manualClose.reopenAt:null,
+  weekly:j.weekly||undefined
+}); });
+
+function checkAdmin(req,res){
+  if (!ADMIN_TOKEN) { res.status(500).json({error:'admin_token_not_configured'}); return false; }
+  if ((req.headers['x-admin-token']||'').trim() !== ADMIN_TOKEN) { res.status(401).json({error:'unauthorized'}); return false; }
+  return true;
+}
+app.get('/api/admin/settings',(req,res)=>{ setCors(req,res); if(!checkAdmin(req,res))return; res.json(readJSON(settingsFile,{})); });
+app.put('/api/admin/settings',(req,res)=>{ setCors(req,res); if(!checkAdmin(req,res))return; const cur=readJSON(settingsFile,{}); const merged=Object.assign({},cur,req.body||{}); writeJSON(settingsFile,merged); res.json({ok:true, saved:true}); });
+
+app.get('/api/zonesPublic',(req,res)=>{ setCors(req,res); res.json({zones:(readJSON(zonesFile,{zones:[]})).zones||[]}); });
+
+/* Catalog passthrough */
+app.get('/api/catalogEverything', async (req,res)=>{
+  try{
+    setCors(req,res);
+    const types = String(req.query.types||'ITEM,ITEM_VARIATION,CATEGORY,MODIFIER_LIST,ITEM_OPTION')
+      .split(',').map(s=>s.trim()).filter(Boolean);
+    if (!SQUARE_ACCESS_TOKEN) return res.status(500).json({error:'no_square_token'});
+    const body={ object_types:types, include_related_objects:true };
+    const r = await fetch(`${SQUARE_BASE}/v2/catalog/search`, {
+      method:'POST',
+      headers:{ Authorization:`Bearer ${SQUARE_ACCESS_TOKEN}`, 'Square-Version':'2024-08-15', 'Content-Type':'application/json' },
+      body:JSON.stringify(body)
+    });
+    const j = await r.json().catch(()=>null);
+    if (!r.ok) return res.status(500).json({error:'square_catalog_error', status:r.status, detail:j});
+    res.json({ objects:j.objects||[], related_objects:j.related_objects||[] });
+  }catch(e){ res.status(500).json({error:'catalog_failed', detail:String(e)}); }
+});
+
+/* Create checkout (returns link + printable) */
+app.post('/api/create-checkout-link', async (req,res)=>{
+  try{
+    setCors(req,res);
+    const payload = req.body||{}, items = Array.isArray(payload.items)?payload.items:[];
+    const fee = clamp(Number(payload.delivery_fee_pence||0),0,10_000_000);
+    const subtotal = items.reduce((s,it)=>s+(Number(it.unit_pence||0)*(Number(it.quantity||1)||1)),0);
+    const total = subtotal + fee;
+    if (!SQUARE_ACCESS_TOKEN || !SQUARE_LOCATION_ID) return res.status(500).json({ok:false, error:'square_config_missing'});
+    if (!total || total<=0) return res.status(400).json({ok:false, error:'invalid_total'});
+
+    const printable_receipt = buildReceipt(payload);
+
+    const pre = {};
+    const c = (payload.meta&&payload.meta.customer)||{};
+    if (c.phone){ const n=normalizePhoneUK(c.phone); if (/^\+\d{7,15}$/.test(n)) pre.buyer_phone_number=n; }
+    if (c.email && String(c.email).includes('@')) pre.buyer_email=c.email;
+    if (c.name){ const n=splitNameForSquare(c.name); if (n.given_name) pre.buyer_given_name=n.given_name; if (n.family_name) pre.buyer_family_name=n.family_name; }
+
+    const orderRef = crypto.randomUUID();
+    let returnUrl = CHECKOUT_RETURN_URL||''; if (returnUrl){ returnUrl += (returnUrl.includes('?')?'&':'?') + 'paid=1&ref=' + orderRef; }
+
+    const body = {
+      idempotency_key: orderRef,
+      quick_pay: { location_id:SQUARE_LOCATION_ID, name: (payload.title||'Barnwell Grill Order'),
+        price_money:{ amount: total, currency:String(payload.currency||'GBP').toUpperCase() } },
+      pre_populated_data: Object.keys(pre).length?pre:undefined,
+      checkout_options: returnUrl ? { redirect_url: returnUrl } : undefined
+    };
+
+    const r = await fetch(`${SQUARE_BASE}/v2/online-checkout/payment-links`, {
+      method:'POST',
+      headers:{ Authorization:`Bearer ${SQUARE_ACCESS_TOKEN}`, 'Square-Version':'2024-08-15', 'Content-Type':'application/json' },
+      body:JSON.stringify(body)
+    });
+    const j = await r.json().catch(()=>null);
+
+    if (!r.ok){
+      if (body.pre_populated_data){
+        const fb={...body}; delete fb.pre_populated_data;
+        const rf = await fetch(`${SQUARE_BASE}/v2/online-checkout/payment-links`, {
+          method:'POST', headers:{ Authorization:`Bearer ${SQUARE_ACCESS_TOKEN}`, 'Square-Version':'2024-08-15','Content-Type':'application/json' },
+          body:JSON.stringify(fb)
+        });
+        const jf = await rf.json().catch(()=>null);
+        if (rf.ok){
+          return res.json({ ok:true, method:'square.payment-links', url:jf?.payment_link?.url||jf?.url||null, printable_receipt, order_ref: orderRef, payment_link_id: jf?.payment_link?.id||null });
+        }
+      }
+      return res.status(502).json({ ok:false, error:'square_payment_link_failed', status:r.status, detail:j });
+    }
+
+    res.json({ ok:true, method:'square.payment-links', url:j?.payment_link?.url||j?.url||null, printable_receipt, order_ref: orderRef, payment_link_id: j?.payment_link?.id||null });
+
+    /* Persist the order for webhook matching */
+    try{
+      writeJSON(path.join(ORDERS_DIR, orderRef+'.json'), {
+        order_ref: orderRef, created_at: nowISO(), payload, printable_receipt,
+        payment_link_id: j?.payment_link?.id||null, payment_link_url: j?.payment_link?.url||j?.url||null,
+        total_pence: total, sentToEpos:false
+      });
+    }catch{}
+
+  }catch(e){ res.status(500).json({ ok:false, error:'create_checkout_failed', detail:String(e) }); }
+});
+
+/* -------- Goodcom printer queue -------- */
+function qList(){ return fs.readdirSync(QUEUE_DIR).filter(f=>f.endsWith('.txt')).sort(); }
+function enqueueTicket(txt, meta={}){
+  const id = Date.now()+'-'+(meta.order_ref||crypto.randomUUID());
+  const body = (txt||'').replace(/\r?\n/g, '\r\n'); // Goodcom likes CRLF
+  const file = path.join(QUEUE_DIR, id+'.txt');
+  fs.writeFileSync(file, body);
+  // small sidecar for tracing
+  fs.writeFileSync(path.join(QUEUE_DIR, id+'.json'), JSON.stringify({ id, meta, enqueued_at: nowISO() }, null, 2));
+  return id;
+}
+
+/* Printer pulls this URL (configured in INI as File Path) */
+app.get('/api/printer-feed.txt', (req,res)=>{
+  // optional token
+  if (PRINTER_TOKEN && req.query.token !== PRINTER_TOKEN) {
+    return res.status(401).send('unauthorized');
+  }
+  const list = qList();
+  res.setHeader('Content-Type','text/plain; charset=utf-8');
+  if (!list.length) return res.send(''); // no job → return empty
+  const fname = list[0];
+  const contents = fs.readFileSync(path.join(QUEUE_DIR, fname),'utf8');
+  // move to done immediately (Goodcom may re-poll; we keep a copy)
+  try{
+    fs.renameSync(path.join(QUEUE_DIR, fname), path.join(DONE_DIR, fname));
+    const side = fname.replace(/\.txt$/i,'.json');
+    if (fs.existsSync(path.join(QUEUE_DIR, side))) fs.renameSync(path.join(QUEUE_DIR, side), path.join(DONE_DIR, side));
+  }catch{}
+  res.send(contents);
+});
+
+/* Optional callback – we just acknowledge and log */
+app.all('/api/printer-callback', (req,res)=>{
+  try{
+    const info = { when: nowISO(), method:req.method, query:req.query, headers:req.headers };
+    fs.writeFileSync(path.join(PRINTER_DIR, 'last-callback.json'), JSON.stringify(info,null,2));
+  }catch{}
+  res.json({ ok:true });
+});
+
+/* Admin: push a test ticket manually */
+app.post('/api/admin/print-test', (req,res)=>{
+  setCors(req,res);
+  if (!checkAdmin(req,res)) return;
+  const text = (req.body && req.body.text) || 'TEST PRINT\n\nThis is a test ticket from Barnwell proxy.\n-------------------------------\nTime: '+nowISO()+'\n';
+  const id = enqueueTicket(text, {source:'admin-test'});
+  res.json({ ok:true, enqueued:id });
+});
+
+/* -------- Webhook (when paid -> enqueue ticket) -------- */
+app.post('/api/square-webhook', express.raw({type:'application/json'}), async (req,res)=>{
+  try{
+    const rawBuf = req.body;
+    // signature verify (optional but you enabled it)
+    if (SQUARE_WEBHOOK_SIGNATURE_KEY){
+      const sigA = (req.headers['x-square-signature']||'').toString();
+      const sigB = (req.headers['x-square-hmacsha256-signature']||'').toString();
+      const calc = crypto.createHmac('sha256', SQUARE_WEBHOOK_SIGNATURE_KEY).update(rawBuf).digest('base64');
+      if (sigA && sigA!==calc && sigB && sigB!==calc) return res.status(401).send('signature_mismatch');
+      if (!sigA && !sigB) return res.status(401).send('signature_required');
+    }
+    const evt = JSON.parse(rawBuf.toString('utf8'));
+    const type = evt?.type || evt?.event_type || '';
+    const payment = evt?.data?.object?.payment || null;
+
+    // match by payment_link_id
+    let matched = null;
+    if (payment?.payment_link_id){
+      for (const f of fs.readdirSync(ORDERS_DIR).filter(n=>n.endsWith('.json'))){
+        const o = readJSON(path.join(ORDERS_DIR,f),null);
+        if (o && o.payment_link_id === payment.payment_link_id){ matched=o; break; }
+      }
+    }
+    // fallback try: reference fields
+    if (!matched){
+      const ref = payment?.reference_id || payment?.order_id || payment?.note;
+      if (ref && fs.existsSync(path.join(ORDERS_DIR, ref+'.json'))) matched = readJSON(path.join(ORDERS_DIR, ref+'.json'),null);
+    }
+    if (!matched){
+      // stash unmatched event for later
+      fs.writeFileSync(path.join(ORDERS_DIR,'unmatched-'+Date.now()+'.json'), JSON.stringify(evt,null,2));
+      return res.json({ ok:true, matched:false });
+    }
+
+    const status = payment?.status || '';
+    const completed = /COMPLETED|PAID|CAPTURED/i.test(status) || /payment\.created/i.test(type);
+
+    // update order file with payment info
+    matched.payment = { id: payment?.id||null, status, raw: payment };
+    writeJSON(path.join(ORDERS_DIR, matched.order_ref+'.json'), matched);
+
+    if (completed){
+      // ENQUEUE the printable receipt for Goodcom
+      enqueueTicket(matched.printable_receipt || 'ORDER\n(no receipt text)\n', { order_ref: matched.order_ref, payment_id: payment?.id||null });
+      return res.json({ ok:true, printedQueued:true });
+    }
+    return res.json({ ok:true, matched:true, completed:false, status });
+
+  }catch(e){
+    return res.status(500).json({ ok:false, error:String(e) });
+  }
+});
+
+/* -------- START -------- */
+app.listen(PORT, ()=>{ console.log('barnwell-proxy (orders + webhook + goodcom) listening on :'+PORT); });

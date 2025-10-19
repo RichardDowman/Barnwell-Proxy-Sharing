@@ -1,0 +1,21 @@
+{
+  "order_ref": "b819ebdf-a07a-43dd-a56e-bccd0374779e",
+  "payload": {
+    "title": "Quick Link Test",
+    "currency": "GBP",
+    "delivery_fee_pence": 10,
+    "items": [
+      {
+        "name": "Test Pizza 12in +Extra Cheese",
+        "quantity": 1,
+        "unit_pence": 1200
+      }
+    ]
+  },
+  "printable_receipt": "                             ORDER\nORDER TYPE = COLLECTION\nORDER DATE = ASAP\n\nName: \nPhone: \n\n---------------------------------------------------------------\nTest Pizza 12in +Extra Cheese                            £12.00\n---------------------------------------------------------------\nSUBTOTAL:                                                £12.00\nDELIVERY FEE:                                             £0.10\nTOTAL:                                                   £12.10\n",
+  "created_at": "2025-10-02T17:13:22.037Z",
+  "payment_link_id": "QQTF376MLDKHEZND",
+  "payment_link_url": "https://square.link/u/vtRcxoyO",
+  "total_pence": 1210,
+  "sentToEpos": false
+}

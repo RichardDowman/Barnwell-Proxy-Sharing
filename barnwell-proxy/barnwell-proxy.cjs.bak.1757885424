@@ -1,0 +1,357 @@
+/* barnwell-proxy.cjs
+ * Barnwell Grill proxy with CORS, admin settings, delivery zones,
+ * Square catalog + checkout link, and UK geocoding via postcodes.io.
+ * Works with the GoodBarber admin UIs you shared.
+ *
+ * Node 18+ required (uses global fetch).
+ */
+
+const express = require('express');
+const morgan = require('morgan');
+const path = require('path');
+const fs = require('fs/promises');
+const crypto = require('crypto');
+
+// =========================
+// Environment
+// =========================
+const PORT = process.env.PORT || 8080;
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // set in systemd drop-in
+const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN || '';
+const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID || '';
+const SUCCESS_URL = process.env.SUCCESS_URL || 'https://barnwellgrill.gbapps.cmslogin.io/ordering-success';
+const CANCEL_URL  = process.env.CANCEL_URL  || 'https://barnwellgrill.gbapps.cmslogin.io/ordering-cancel';
+
+// =========================
+// Storage helpers
+// =========================
+const DB_FILE = path.join(DATA_DIR, 'data.json');
+async function readDB(){
+  try{
+    await fs.mkdir(DATA_DIR, { recursive:true });
+    const txt = await fs.readFile(DB_FILE, 'utf8').catch(()=>'{ }');
+    const json = JSON.parse(txt || '{}');
+    if(!json.zones) json.zones = [];
+    if(!json.settings) json.settings = {};
+    return json;
+  }catch(e){ console.error('readDB failed', e); return { zones:[], settings:{} }; }
+}
+async function writeDB(db){
+  await fs.mkdir(DATA_DIR, { recursive:true });
+  await fs.writeFile(DB_FILE, JSON.stringify(db,null,2), 'utf8');
+}
+function cuid(){ return crypto.randomUUID(); }
+
+// =========================
+// App + middleware
+// =========================
+const app = express();
+
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*'); // GoodBarber webview + browser
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Admin-Token,ngrok-skip-browser-warning');
+  res.setHeader('Vary', 'Origin');
+  if(req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+
+app.use(express.json({ limit:'1mb' }));
+app.use(morgan('tiny'));
+
+// simple admin auth
+function requireAdmin(req, res, next){
+  const tok = req.get('x-admin-token') || req.get('X-Admin-Token') || '';
+  if(!ADMIN_TOKEN || tok === ADMIN_TOKEN) return next();
+  return res.status(401).json({ error:'unauthorised' });
+}
+
+// =========================
+// Health
+// =========================
+app.get(['/health','/api/health'], (_req,res)=>{
+  res.json({ ok:true, service:'barnwell-proxy', time:new Date().toISOString() });
+});
+
+// =========================
+// Zones (public + admin V2 + legacy)
+// Data shape we store:
+// { id, name, price_pence, active:true, polygon:{ type:'Polygon', coordinates:[ [ [lng,lat], ... closed ] ] } }
+// =========================
+function normalizePolygonFromBody(body){
+  // Accept multiple shapes and normalise to GeoJSON Polygon.
+  let polygon = null;
+
+  // If already GeoJSON-like: {type:'Polygon', coordinates:[ring]}
+  if(body && body.polygon && Array.isArray(body.polygon.coordinates)){
+    polygon = body.polygon;
+  }
+  // Accept "coordinates" on root
+  else if(body && Array.isArray(body.coordinates)){
+    polygon = { type:'Polygon', coordinates: [ body.coordinates ] };
+  }
+  // Accept "ring" or "points" as [ [lng,lat], ... ]
+  else if(Array.isArray(body.ring)){
+    polygon = { type:'Polygon', coordinates: [ body.ring ] };
+  } else if(Array.isArray(body.points)){
+    polygon = { type:'Polygon', coordinates: [ body.points ] };
+  }
+
+  // Validate
+  if(polygon && polygon.type !== 'Polygon') polygon = null;
+  if(polygon){
+    const ring = polygon.coordinates && polygon.coordinates[0];
+    if(!Array.isArray(ring) || ring.length < 3) polygon = null;
+    else {
+      // Ensure closed ring [0] == [last]
+      const first = ring[0], last = ring[ring.length-1];
+      if(!(Array.isArray(first) && Array.isArray(last) && first.length>=2 && last.length>=2 &&
+           Number(first[0]) === Number(last[0]) && Number(first[1]) === Number(last[1]))){
+        polygon.coordinates[0] = ring.concat([[ Number(first[0]), Number(first[1]) ]]);
+      }
+      // Coerce to numbers
+      polygon.coordinates[0] = polygon.coordinates[0].map(p => [ Number(p[0]), Number(p[1]) ]);
+    }
+  }
+  return polygon;
+}
+
+app.get(['/api/zonesPublic'], async (req,res)=>{
+  const db = await readDB();
+  const activeOnly = String(req.query.activeOnly||'true') !== 'false';
+  const zones = db.zones.filter(z => activeOnly ? z.active !== false : true);
+  res.json({ zones });
+});
+
+// Admin V2 (used by your admin UI)
+app.get(['/api/zonesAdminV2','/api/zones'], requireAdmin, async (req,res)=>{
+  const db = await readDB();
+  const activeOnly = String(req.query.activeOnly||'false') === 'true';
+  const zones = db.zones.filter(z => activeOnly ? z.active !== false : true);
+  res.json({ zones });
+});
+
+app.post(['/api/zonesAdminV2','/api/zones'], requireAdmin, async (req,res)=>{
+  const db = await readDB();
+  const id = (req.body.id || '').trim() || cuid();
+  const name = (req.body.name || '').trim() || 'Zone';
+  // price can come as price_pence (preferred) or price (in GBP)
+  const price_pence = Number.isFinite(req.body.price_pence) ? Number(req.body.price_pence) :
+                      Number.isFinite(Number(req.body.price)) ? Math.round(Number(req.body.price) * 100) : 0;
+  const active = (req.body.active === false) ? false : true;
+
+  const polygon = normalizePolygonFromBody(req.body);
+  if(!polygon){
+    return res.status(400).json({ error:'polygon_required' });
+  }
+
+  const idx = db.zones.findIndex(z => z.id === id);
+  const payload = { id, name, price_pence, active, polygon };
+  if(idx >= 0) db.zones[idx] = Object.assign({}, db.zones[idx], payload);
+  else db.zones.push(payload);
+  await writeDB(db);
+  res.json({ ok:true, zone: payload });
+});
+
+// DELETE supports both patterns used by your admin UI:
+//  - DELETE /api/zonesAdminV2?id=... (your HTML calls this)  :contentReference[oaicite:2]{index=2}
+//  - DELETE /api/zonesAdminV2/:id (nice REST)
+app.delete(['/api/zonesAdminV2', '/api/zones'], requireAdmin, async (req,res)=>{
+  const id = (req.query.id || '').trim();
+  if(!id) return res.status(400).json({ error:'id_required' });
+  const db = await readDB();
+  const before = db.zones.length;
+  db.zones = db.zones.filter(z => z.id !== id);
+  const deleted = db.zones.length !== before;
+  await writeDB(db);
+  res.json({ ok:true, deleted, id });
+});
+app.delete(['/api/zonesAdminV2/:id','/api/zones/:id'], requireAdmin, async (req,res)=>{
+  req.query.id = req.params.id; // delegate to handler above
+  return app._router.handle(req, res, ()=>{});
+});
+
+// =========================
+// Delivery price + geocode
+// =========================
+function pointInRing(lng, lat, ring){
+  if(!Array.isArray(ring) || ring.length < 3) return false;
+  let inside = false;
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+    const xi = Number(ring[i][0]), yi = Number(ring[i][1]);
+    const xj = Number(ring[j][0]), yj = Number(ring[j][1]);
+    const intersect = ((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi + 0.0) + xi);
+    if(intersect) inside = !inside;
+  }
+  return inside;
+}
+
+app.post('/api/delivery-price', async (req,res)=>{
+  try{
+    let { lat, lng, postcode } = req.body || {};
+    lat = (lat!=null) ? Number(lat) : null;
+    lng = (lng!=null) ? Number(lng) : null;
+
+    if((lat==null || isNaN(lat) || lng==null || isNaN(lng)) && postcode){
+      // UK geocode via postcodes.io
+      const r = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(String(postcode).trim())}`)
+                      .then(r => r.json()).catch(()=>null);
+      if(r && r.status === 200 && r.result){ lat = r.result.latitude; lng = r.result.longitude; }
+    }
+
+    if(lat==null || isNaN(lat) || lng==null || isNaN(lng)){
+      return res.json({ deliverable:false, reason:'no_coordinates' });
+    }
+
+    const db = await readDB();
+    let match = null;
+    for(const z of db.zones){
+      if(z.active === false) continue;
+      const ring = (z.polygon && z.polygon.coordinates && z.polygon.coordinates[0]) || z.ring || z.coordinates || null;
+      if(!Array.isArray(ring) || ring.length < 3) continue;
+      if(pointInRing(lng, lat, ring)){ match = z; break; }
+    }
+    if(!match) return res.json({ deliverable:false, matched:false });
+
+    return res.json({
+      deliverable:true, matched:true,
+      price_pence: Number(match.price_pence||0),
+      zoneName: match.name || 'Zone',
+      zone_id: match.id
+    });
+  }catch(e){
+    console.error('delivery-price failed', e);
+    res.status(500).json({ error:'server_error' });
+  }
+});
+
+// lightweight geocode wrapper the frontends expect
+app.get('/api/geocode', async (req,res)=>{
+  const q = (req.query.postcode || req.query.q || '').trim();
+  if(!q) return res.json({ results: [] });
+  const r = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(q)}`)
+            .then(r=>r.json()).catch(()=>null);
+  if(r && r.status === 200 && r.result){
+    const lat = r.result.latitude, lng = r.result.longitude;
+    return res.json({
+      results: [{ formatted_address: q, geometry:{ location:{ lat, lng } } }]
+    });
+  }
+  return res.json({ results: [] });
+});
+
+// =========================
+// Admin settings
+// =========================
+app.get('/api/admin/settings', requireAdmin, async (_req,res)=>{
+  const db = await readDB();
+  res.json({ settings: db.settings || {} });
+});
+app.post('/api/admin/settings', requireAdmin, async (req,res)=>{
+  const db = await readDB();
+  db.settings = Object.assign({}, db.settings || {}, req.body || {});
+  await writeDB(db);
+  res.json({ ok:true, settings: db.settings });
+});
+
+// =========================
+// Square: catalog + checkout link
+// =========================
+async function squareFetch(path, options={}){
+  if(!SQUARE_ACCESS_TOKEN) throw new Error('square_not_configured');
+  const url = `https://connect.squareup.com${path}`;
+  const headers = Object.assign({
+    'Authorization': `Bearer ${SQUARE_ACCESS_TOKEN}`,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  }, options.headers || {});
+  const resp = await fetch(url, Object.assign({}, options, { headers }));
+  if(!resp.ok){
+    const txt = await resp.text().catch(()=>resp.statusText||'');
+    throw new Error(`Square ${path} ${resp.status} ${txt}`);
+  }
+  return await resp.json();
+}
+
+// Basic catalog passthrough used by your ORDERING.txt
+app.get(['/api/catalog','/catalog'], async (_req,res)=>{
+  try{
+    // Pull items + variations + modifiers in one go (two calls and merge)
+    const items = await squareFetch('/v2/catalog/list?types=ITEM,ITEM_VARIATION,MODIFIER,MODIFIER_LIST');
+    res.json(items);
+  }catch(e){
+    console.error('catalog failed', e); res.status(500).json({ error:'catalog_failed' });
+  }
+});
+app.get(['/api/catalogEverything','/catalogEverything'], async (_req,res)=>{
+  try{
+    const all = await squareFetch('/v2/catalog/list?types=ITEM,ITEM_VARIATION,MODIFIER,MODIFIER_LIST,CATEGORY,TAX');
+    res.json(all);
+  }catch(e){
+    console.error('catalogEverything failed', e); res.status(500).json({ error:'catalog_failed' });
+  }
+});
+
+// Create a Square Online Checkout Payment Link
+app.post(['/api/create-checkout-link','/create-checkout-link'], async (req,res)=>{
+  try{
+    if(!SQUARE_ACCESS_TOKEN || !SQUARE_LOCATION_ID){
+      return res.status(400).json({ error:'square_not_configured' });
+    }
+    const body = req.body || {};
+    const { order, referenceId, note } = body;
+
+    // Minimal payment link (Square will host the checkout)
+    const payload = {
+      idempotency_key: crypto.randomUUID(),
+      order: order || {
+        location_id: SQUARE_LOCATION_ID,
+        line_items: [
+          { quantity: '1', name: note || 'Order', base_price_money: { amount: 100, currency: 'GBP' } }
+        ]
+      },
+      checkout_options: {
+        redirect_url: SUCCESS_URL,
+        ask_for_shipping_address: false
+      },
+      pre_populated_data: {},
+      description: note || undefined,
+      reference_id: referenceId || undefined
+    };
+
+    const j = await squareFetch('/v2/online-checkout/payment-links', {
+      method:'POST',
+      body: JSON.stringify(payload)
+    });
+    res.json(j);
+  }catch(e){
+    console.error('create-checkout-link failed', e);
+    res.status(500).json({ error:'create_checkout_failed', detail: String(e && e.message || e) });
+  }
+});
+
+// =========================
+// Root + 404 + error handler
+// =========================
+app.get('/', (_req,res)=> res.json({ ok:true, service:'barnwell-proxy' }));
+
+app.use((req, res, _next) => {
+  if (req.path === '/' || req.path === '/api') {
+    return res.json({ ok: true, service: 'barnwell-proxy' });
+  }
+  return res.status(404).json({ error: 'not_found', path: req.path });
+});
+
+app.use((err, _req, res, _next) => {
+  console.error('Unhandled error', err);
+  res.status(500).json({ error: 'server_error', detail: String(err && err.message || err) });
+});
+
+// =========================
+// Start
+// =========================
+app.listen(PORT, () => {
+  console.log(`barnwell-proxy listening on :${PORT}`);
+});
+

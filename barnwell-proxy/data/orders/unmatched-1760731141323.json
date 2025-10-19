@@ -1,0 +1,44 @@
+{
+  "merchant_id": "MLRVNNTQGEETM",
+  "type": "payment.created",
+  "event_id": "2f122b9e-c295-3995-bd76-c039d68ae652",
+  "created_at": "2025-10-17T19:59:00.244Z",
+  "data": {
+    "type": "payment",
+    "id": "nDu5TsYTnaiII0eC8swZc3pXnsHZY",
+    "object": {
+      "payment": {
+        "amount_money": {
+          "amount": 0,
+          "currency": "GBP"
+        },
+        "application_details": {
+          "square_product": "SQUARE_POS"
+        },
+        "capabilities": [
+          "EDIT_AMOUNT_UP",
+          "EDIT_AMOUNT_DOWN",
+          "EDIT_TIP_AMOUNT_UP",
+          "EDIT_TIP_AMOUNT_DOWN"
+        ],
+        "created_at": "2025-10-17T19:59:00.223Z",
+        "external_details": {
+          "source": "NO_SALE",
+          "type": "OTHER"
+        },
+        "id": "nDu5TsYTnaiII0eC8swZc3pXnsHZY",
+        "location_id": "L0R86R4QCD2NF",
+        "order_id": "cdg9ye0K0kBXVOgcbWb0bCQwOaNZY",
+        "receipt_number": "nDu5",
+        "source_type": "EXTERNAL",
+        "status": "APPROVED",
+        "total_money": {
+          "amount": 0,
+          "currency": "GBP"
+        },
+        "updated_at": "2025-10-17T19:59:00.223Z",
+        "version": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "order_ref": "7a29203c-c512-4422-b217-1fc9e0f3c758",
+  "created_at": "2025-10-10T19:43:07.924Z",
+  "payload": {
+    "title": "Barnwell Order",
+    "currency": "GBP",
+    "items": [
+      {
+        "name": "Margherita 12\"",
+        "unit_pence": 899,
+        "quantity": 1
+      },
+      {
+        "name": "Garlic Bread",
+        "unit_pence": 349,
+        "quantity": 2
+      }
+    ],
+    "delivery_fee_pence": 0,
+    "meta": {
+      "fulfilment": "collection",
+      "customer": {
+        "name": "Test Customer",
+        "phone": "07123 456789",
+        "email": "test@example.com"
+      },
+      "scheduled_at": null
+    }
+  },
+  "printable_receipt": "                             ORDER\nORDER TYPE = COLLECTION\nORDER DATE = ASAP\n\nName: Test Customer\nPhone: 07123 456789\n\n---------------------------------------------------------------\nMargherita 12\"                                            £8.99\n---------------------------------------------------------------\nGarlic Bread (+1)                                         £6.98\n---------------------------------------------------------------\nSUBTOTAL:                                                £15.97\nDELIVERY FEE:                                             £0.00\nTOTAL:                                                   £15.97\n",
+  "payment_link_id": "AL2IPKEMX7H4EZSC",
+  "payment_link_url": "https://square.link/u/FhLHC2Nl",
+  "total_pence": 1597,
+  "sentToPrinter": false,
+  "contactKey": "8cc62e120e9efbf2ab8c87b35b35205f3934760a2ea8ee2c249888e7f6b6daad"
+}

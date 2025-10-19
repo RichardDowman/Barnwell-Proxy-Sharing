@@ -1,0 +1,11 @@
+node_modules/
+*.log
+uploads/
+dist/
+build/
+.tmp/
+*.pem
+*.key
+.env
+.env.local
+/.cache

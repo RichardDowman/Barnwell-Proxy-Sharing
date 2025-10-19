@@ -1,0 +1,71 @@
+# ----- Delivery Zones Admin v2 -----
+# Answer browser preflight here; send GETs to the existing proxy app on :8080
+location ~* ^/api/zonesAdminV2$ {
+    if ($request_method = OPTIONS) {
+        add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io";
+        add_header Access-Control-Allow-Methods "GET,OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type, X-Admin-Token, x-admin-token";
+        add_header Vary "Origin";
+        add_header Content-Length "0";
+        add_header Content-Type "text/plain; charset=utf-8";
+        return 204;
+    }
+    proxy_pass http://127.0.0.1:8080;  # this is where your zones GET already works
+    proxy_set_header Host $host;
+}
+
+# ----- Admin settings (already working) -----
+location = /api/admin/settings {
+    if ($request_method = OPTIONS) {
+        add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io";
+        add_header Access-Control-Allow-Methods "GET,POST,PUT,DELETE,OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type, X-Admin-Token, x-admin-token";
+        add_header Vary "Origin";
+        add_header Content-Length "0";
+        add_header Content-Type "text/plain; charset=utf-8";
+        return 204;
+    }
+    proxy_pass http://127.0.0.1:8082;  # overlay
+    proxy_set_header Host $host;
+}
+
+# Prefix passthrough for other admin endpoints
+location  /api/admin/ { proxy_pass http://127.0.0.1:8082; proxy_set_header Host $host; }
+
+# Public settings (preflight + GET to overlay)
+location = /api/settings {
+    if ($request_method = OPTIONS) {
+        add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io";
+        add_header Access-Control-Allow-Methods "GET,OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type";
+        add_header Vary "Origin";
+        add_header Content-Length "0";
+        add_header Content-Type "text/plain; charset=utf-8";
+        return 204;
+    }
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+}
+
+# Geocode (preflight + GET to overlay)
+location = /api/geocode {
+    if ($request_method = OPTIONS) {
+        add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io";
+        add_header Access-Control-Allow-Methods "GET,OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type";
+        add_header Vary "Origin";
+        add_header Content-Length "0";
+        add_header Content-Type "text/plain; charset=utf-8";
+        return 204;
+    }
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+}
+
+# Health (used by your PWA SW)
+location = /health {
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host $host;
+    add_header Access-Control-Allow-Origin "https://barnwellgrill.gbapps.cmslogin.io" always;
+    add_header Vary "Origin" always;
+}

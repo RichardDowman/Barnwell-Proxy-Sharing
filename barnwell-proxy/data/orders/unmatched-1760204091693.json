@@ -1,0 +1,87 @@
+{
+  "merchant_id": "MLRVNNTQGEETM",
+  "type": "payment.created",
+  "event_id": "8636629c-3767-37fd-9c8b-d9ccc0c73c99",
+  "created_at": "2025-10-10T17:31:20.832Z",
+  "data": {
+    "type": "payment",
+    "id": "ZShjiyLBSee3RQFFBBkAw8jdT7VZY",
+    "object": {
+      "payment": {
+        "amount_money": {
+          "amount": 1350,
+          "currency": "GBP"
+        },
+        "application_details": {
+          "square_product": "SQUARE_POS"
+        },
+        "approved_money": {
+          "amount": 1350,
+          "currency": "GBP"
+        },
+        "capabilities": [
+          "EDIT_AMOUNT_UP",
+          "EDIT_AMOUNT_DOWN",
+          "EDIT_TIP_AMOUNT_UP",
+          "EDIT_TIP_AMOUNT_DOWN"
+        ],
+        "card_details": {
+          "application_cryptogram": "e7556d6a0e5abc85",
+          "application_identifier": "A0000000041010",
+          "application_name": "DEBIT MASTERCARD",
+          "auth_result_code": "AN3ZLW",
+          "avs_status": "AVS_NOT_CHECKED",
+          "card": {
+            "bin": "527483",
+            "card_brand": "MASTERCARD",
+            "card_type": "DEBIT",
+            "exp_month": 10,
+            "exp_year": 2027,
+            "fingerprint": "sq-1-VDXuQgH3lZTGTZPWzXfyWore2fn6oideSrezJCLcHzFFxOy6pG0h4R_aiBE9dbs1pw",
+            "last_4": "3684",
+            "payment_account_reference": "50013QNBKMC0EU6QOTS5WSM73ENOM",
+            "prepaid_type": "NOT_PREPAID"
+          },
+          "card_payment_timeline": {
+            "authorized_at": "2025-10-10T17:31:20.814Z"
+          },
+          "cvv_status": "CVV_NOT_CHECKED",
+          "device_details": {
+            "device_id": "527CS134A9000265",
+            "device_installation_id": "b3824923-4461-4d33-a95e-ed07e928c1d4",
+            "device_name": "Square Register 0265"
+          },
+          "emv_details": {
+            "authorization_response_code": "3030"
+          },
+          "entry_method": "CONTACTLESS",
+          "statement_description": "SQ *BARNWELL PIZZA AND G",
+          "status": "AUTHORIZED",
+          "verification_method": "NONE",
+          "verification_results": "SUCCESS"
+        },
+        "created_at": "2025-10-10T17:31:19.278Z",
+        "delay_action": "CANCEL",
+        "delay_duration": "PT36H",
+        "delayed_until": "2025-10-12T05:31:19.278Z",
+        "device_details": {
+          "device_id": "527CS134A9000265",
+          "device_installation_id": "b3824923-4461-4d33-a95e-ed07e928c1d4",
+          "device_name": "Square Register 0265"
+        },
+        "id": "ZShjiyLBSee3RQFFBBkAw8jdT7VZY",
+        "location_id": "L0R86R4QCD2NF",
+        "order_id": "ExayxAHdxp2ZdSMpJQegOzsxcrfZY",
+        "receipt_number": "ZShj",
+        "source_type": "CARD",
+        "status": "APPROVED",
+        "total_money": {
+          "amount": 1350,
+          "currency": "GBP"
+        },
+        "updated_at": "2025-10-10T17:31:20.814Z",
+        "version": 1
+      }
+    }
+  }
+}

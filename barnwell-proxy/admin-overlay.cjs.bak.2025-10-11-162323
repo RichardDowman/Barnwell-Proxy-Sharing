@@ -1,0 +1,122 @@
+/**
+ * Barnwell overlay:
+ *  - GET  /api/settings
+ *  - GET  /api/admin/settings    (X-Admin-Token)
+ *  - PUT  /api/admin/settings    (X-Admin-Token)
+ *  - GET  /api/geocode?postcode= (postcodes.io)
+ *  - GET  /api/zonesAdminV2?activeOnly=true|false  (reads DATA_DIR/zones.json)
+ *  - GET  /health                (JSON; for SW checks)
+ * Listens on 127.0.0.1:8082
+ */
+const express = require('express');
+const fs = require('fs');
+const fsp = fs.promises;
+const path = require('path');
+const fetch = global.fetch;
+
+const PORT = 8082;
+const DATA_DIR = process.env.DATA_DIR || '/var/www/barnwell-proxy/data';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const ZONES_FILE    = path.join(DATA_DIR, 'zones.json');
+
+const app = express();
+app.disable('x-powered-by');
+app.use(express.json({ limit: '1mb' }));
+
+function jsonError(res, code, error, detail) {
+  res.status(code).json({ ok: false, error, detail: detail ?? null });
+}
+async function readJSONSafe(file, fallback = {}) {
+  try {
+    const txt = (await fsp.readFile(file)).toString('utf8').replace(/^\uFEFF/, '');
+    return JSON.parse(txt);
+  } catch { return fallback; }
+}
+async function writeJSONSafe(file, obj) {
+  const tmp = file + '.tmp';
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  await fsp.writeFile(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+  await fsp.rename(tmp, file);
+}
+
+/* ---------- Public: settings ---------- */
+app.get('/api/settings', async (_req, res) => {
+  res.json(await readJSONSafe(SETTINGS_FILE, {}));
+});
+
+/* ---------- Admin guard ---------- */
+function requireAdmin(req, res, next) {
+  const tok = req.header('X-Admin-Token') || '';
+  if (!ADMIN_TOKEN || tok !== ADMIN_TOKEN) {
+    return jsonError(res, 401, 'unauthorized', 'missing or invalid X-Admin-Token');
+  }
+  next();
+}
+
+/* ---------- Admin: settings ---------- */
+app.get('/api/admin/settings', requireAdmin, async (_req, res) => {
+  res.json(await readJSONSafe(SETTINGS_FILE, {}));
+});
+app.put('/api/admin/settings', requireAdmin, async (req, res) => {
+  const incoming = (req.body && typeof req.body === 'object') ? req.body : null;
+  if (!incoming) return jsonError(res, 400, 'bad_request', 'JSON body required');
+  if (!incoming.businessHours || !incoming.slotConfig) {
+    return jsonError(res, 400, 'invalid_settings', { need: ['businessHours','slotConfig'] });
+  }
+  try {
+    await writeJSONSafe(SETTINGS_FILE, incoming);
+    res.json({ ok: true, saved: true });
+  } catch (e) {
+    jsonError(res, 500, 'persist_failed', String(e?.message || e));
+  }
+});
+
+/* ---------- Geocode via postcodes.io ---------- */
+app.get('/api/geocode', async (req, res) => {
+  const raw = (req.query.postcode || req.query.q || '').toString().trim();
+  if (!raw) return res.json({ results: [] });
+  const up = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const m = up.match(/^([A-Z]{1,2}\d[A-Z0-9]?\d[A-Z]{2})$/);
+  if (!m) return res.json({ results: [] });
+  const norm = up.replace(/(\d[A-Z]{2})$/, ' $1');
+  try {
+    const r = await fetch('https://api.postcodes.io/postcodes/' + encodeURIComponent(norm));
+    const j = await r.json().catch(() => null);
+    if (!j || j.status !== 200 || !j.result) return res.json({ results: [] });
+    const { latitude: lat, longitude: lng, country, admin_district, postcode } = j.result;
+    const formatted_address = [postcode, admin_district, country].filter(Boolean).join(', ');
+    res.json({ results: [{ formatted_address, geometry: { location: { lat, lng } } }] });
+  } catch { res.json({ results: [] }); }
+});
+
+/* ---------- Zones Admin V2 (read-only) ----------
+   File format is your existing DATA_DIR/zones.json.
+   We return an array. If the file has {zones:[...]}, we unwrap it.
+-------------------------------------------------- */
+app.get('/api/zonesAdminV2', async (req, res) => {
+  const data = await readJSONSafe(ZONES_FILE, []);
+  const list = Array.isArray(data) ? data
+             : Array.isArray(data.zones) ? data.zones
+             : [];
+  const activeOnly = String(req.query.activeOnly || '').toLowerCase();
+  const wantActiveOnly = activeOnly === 'true' || activeOnly === '1';
+  const zones = wantActiveOnly
+    ? list.filter(z => (z.active ?? z.enabled ?? true))
+    : list;
+  res.json(zones);
+});
+
+/* ---------- Health (root) ---------- */
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, service: 'admin-overlay', time: new Date().toISOString() });
+});
+
+/* ---------- 404 JSON ---------- */
+app.use((req, res) => jsonError(res, 404, 'not_found', req.method + ' ' + req.url));
+
+/* ---------- Listen ---------- */
+app.listen(PORT, '127.0.0.1', () => {
+  console.log(`admin-overlay listening on 127.0.0.1:${PORT} (DATA_DIR=${DATA_DIR})`);
+});

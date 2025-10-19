@@ -1,0 +1,45 @@
+{
+  "merchant_id": "MLRVNNTQGEETM",
+  "type": "payment.updated",
+  "event_id": "ccb10d6d-5df2-3f3c-8107-d1c862b06658",
+  "created_at": "2025-10-11T19:01:53.743Z",
+  "data": {
+    "type": "payment",
+    "id": "HzidkaG11MTeIYqpnePBPspdnzQZY",
+    "object": {
+      "payment": {
+        "amount_money": {
+          "amount": 0,
+          "currency": "GBP"
+        },
+        "application_details": {
+          "square_product": "SQUARE_POS"
+        },
+        "capabilities": [
+          "EDIT_AMOUNT_UP",
+          "EDIT_AMOUNT_DOWN",
+          "EDIT_TIP_AMOUNT_UP",
+          "EDIT_TIP_AMOUNT_DOWN"
+        ],
+        "created_at": "2025-10-11T19:01:50.174Z",
+        "external_details": {
+          "source": "NO_SALE",
+          "type": "OTHER"
+        },
+        "id": "HzidkaG11MTeIYqpnePBPspdnzQZY",
+        "location_id": "L0R86R4QCD2NF",
+        "order_id": "ojwRKpjSHHwyfkPG398sbBQNoZGZY",
+        "receipt_number": "Hzid",
+        "receipt_url": "https://squareup.com/receipt/preview/HzidkaG11MTeIYqpnePBPspdnzQZY",
+        "source_type": "EXTERNAL",
+        "status": "COMPLETED",
+        "total_money": {
+          "amount": 0,
+          "currency": "GBP"
+        },
+        "updated_at": "2025-10-11T19:01:52.389Z",
+        "version": 1
+      }
+    }
+  }
+}

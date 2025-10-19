@@ -1,0 +1,54 @@
+{
+  "order_ref": "57e32799-88a3-4368-a050-bf3fe417f8cf",
+  "created_at": "2025-10-11T22:43:44.741Z",
+  "payload": {
+    "items": [
+      {
+        "name": "9\" Cheese & Tomato Ⓥ  APP TEST ITEM",
+        "quantity": 1,
+        "unit_pence": 100,
+        "groups": [
+          {
+            "name": "Crust",
+            "values": [
+              "Deep Pan"
+            ]
+          },
+          {
+            "name": "Pizza Base",
+            "values": [
+              "BBQ"
+            ]
+          },
+          {
+            "name": "Add Stuffed Crust",
+            "values": [
+              "No"
+            ]
+          }
+        ]
+      }
+    ],
+    "delivery_fee_pence": 10,
+    "currency": "GBP",
+    "title": "Barnwell Grill Order",
+    "idempotency_key": "idem_5iaqqcnls4w_1760222623859",
+    "meta": {
+      "fulfilment": "delivery",
+      "scheduled_at": "2025-10-12T10:00:00.000Z",
+      "address": "8 Walcot Close, Oundle, pe84qu",
+      "payment_method": "card",
+      "customer": {
+        "name": "Richard Dowman",
+        "phone": "+447789770210",
+        "email": "r.dowman@eazi-apps.co.uk"
+      }
+    }
+  },
+  "printable_receipt": "                             ORDER\nORDER TYPE = DELIVERY\nORDER DATE = 12th Oct @ 10:00\n\nName: Richard Dowman\nPhone: +447789770210\nAddress: 8 Walcot Close, Oundle, pe84qu\n\n---------------------------------------------------------------\n9\" Cheese & Tomato Ⓥ  APP TEST ITEM                       £1.00\nCrust: Deep Pan\nPizza Base: BBQ\nAdd Stuffed Crust: No\n---------------------------------------------------------------\nSUBTOTAL:                                                 £1.00\nDELIVERY FEE:                                             £0.10\nTOTAL:                                                    £1.10\n",
+  "payment_link_id": "X4TSRYJ746JALYLU",
+  "payment_link_url": "https://square.link/u/n2nDnSCe",
+  "total_pence": 110,
+  "sentToPrinter": false,
+  "contactKey": "fe3800d6f30220e15d133bf43de0ad2e4e0b86b2add7f2b12c09fffbea178a75"
+}

@@ -1,0 +1,70 @@
+{
+  "order_ref": "2c8b7179-4455-47a6-90a3-8b6a3e399163",
+  "payload": {
+    "title": "Sanity Test Order",
+    "currency": "GBP",
+    "delivery_fee_pence": 200,
+    "items": [
+      {
+        "name": "Pepperoni Pizza",
+        "quantity": 2,
+        "unit_pence": 1099,
+        "groups": [
+          {
+            "name": "Size",
+            "values": [
+              "12in"
+            ]
+          },
+          {
+            "name": "Toppings",
+            "values": [
+              "Extra Cheese"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Barnwell Burger",
+        "quantity": 1,
+        "unit_pence": 1299,
+        "groups": [
+          {
+            "name": "Size",
+            "values": [
+              "Large"
+            ]
+          },
+          {
+            "name": "Cheese",
+            "values": [
+              "Cheddar"
+            ]
+          },
+          {
+            "name": "Sauces",
+            "values": [
+              "BBQ"
+            ]
+          }
+        ]
+      }
+    ],
+    "meta": {
+      "fulfilment": "delivery",
+      "scheduled_at": null,
+      "address": "1 High Street, Barnwell, PE8 4QU",
+      "customer": {
+        "name": "Jane Smith",
+        "phone": "+447700900123",
+        "email": "jane@example.com"
+      }
+    }
+  },
+  "printable_receipt": "                             ORDER\nORDER TYPE = DELIVERY\nORDER DATE = ASAP\n\nName: Jane Smith\nPhone: +447700900123\nAddress: 1 High Street, Barnwell, PE8 4QU\n\n---------------------------------------------------------------\nPepperoni Pizza (+1)                                     £21.98\nSize: 12in\nToppings: Extra Cheese\n---------------------------------------------------------------\nBarnwell Burger                                          £12.99\nSize: Large\nCheese: Cheddar\nSauces: BBQ\n---------------------------------------------------------------\nSUBTOTAL:                                                £34.97\nDELIVERY FEE:                                             £2.00\nTOTAL:                                                   £36.97\n",
+  "created_at": "2025-10-02T17:14:17.739Z",
+  "payment_link_id": "C57WJSK6KZBLX72K",
+  "payment_link_url": "https://square.link/u/xiwgiGI2",
+  "total_pence": 3697,
+  "sentToEpos": false
+}

@@ -1,0 +1,437 @@
+cat <<'EOF' | sudo tee /var/www/barnwell-proxy/barnwell-proxy.cjs >/dev/null
+#!/usr/bin/env node
+// barnwell-proxy.cjs — Barnwell Grill (zones + delivery + robust Square checkout + HTTP fallback + redirect)
+
+require('dotenv').config({ path: '/etc/barnwell-proxy.env' });
+
+const fs = require('fs');
+const path = require('path');
+const express = require('express');
+const bodyParser = require('body-parser');
+const { randomUUID } = require('crypto');
+
+// ----- Square client compatibility -----
+function makeSquareClient() {
+  let sq;
+  try { sq = require('square'); } catch { sq = null; }
+  if (!sq) return { client: null, ApiError: null, envName: (process.env.SQUARE_ENV || 'production').toLowerCase() };
+  let Client = sq.Client || sq.SquareClient;
+  let Environment = sq.Environment || sq.SquareEnvironment;
+  let ApiError = sq.ApiError || sq.SquareError;
+  if (!Client && sq.default) {
+    Client = sq.default.Client || sq.default.SquareClient || Client;
+    Environment = sq.default.Environment || sq.default.SquareEnvironment || Environment;
+    ApiError = sq.default.ApiError || sq.default.SquareError || ApiError;
+  }
+  const ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN || '';
+  const envName = (process.env.SQUARE_ENV || 'production').toLowerCase();
+  const env = (Environment && (Environment.Sandbox || Environment.Production))
+    ? (envName === 'sandbox' ? (Environment.Sandbox || 'sandbox') : (Environment.Production || 'production'))
+    : (envName === 'sandbox' ? 'sandbox' : 'production');
+  const client = Client ? new Client({ accessToken: ACCESS_TOKEN, environment: env }) : null;
+  return { client, ApiError, envName };
+}
+const { client, ApiError: SquareApiError, envName: SQUARE_ENV } = makeSquareClient();
+
+// ----- Config -----
+const PORT = Number(process.env.PORT || 8080);
+const STATIC_LOCATION_ID = (process.env.SQUARE_LOCATION_ID || '').trim();
+const GOOGLE_MAPS_KEY = (process.env.GOOGLE_MAPS_KEY || '').trim();
+const CHECKOUT_RETURN_URL = (process.env.CHECKOUT_RETURN_URL || '').trim();
+const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN || '';
+
+// ----- Data files -----
+const DATA_DIR = path.join(__dirname, 'data');
+const SETTINGS_FILE = path.join(DATA_DIR, 'admin-settings.json');
+const ZONES_FILE = path.join(DATA_DIR, 'zones.json');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(SETTINGS_FILE)) {
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ settings: {
+    manualClosed:false, reopenAt:null,
+    weekly: Array.from({length:7}, ()=>({ enabled:true, open:'11:00', close:'22:00'})),
+    slotConfig: { collection:{ granularity_minutes:60, min_lead_minutes:30, min_order_pence:800 },
+                  delivery:{   granularity_minutes:60, min_lead_minutes:45, min_order_pence:1200 } }
+  } }, null, 2));
+}
+if (!fs.existsSync(ZONES_FILE)) {
+  fs.writeFileSync(ZONES_FILE, JSON.stringify({ updated_at:new Date().toISOString(), zones: [] }, null, 2));
+}
+
+// ----- Helpers -----
+const ok  = (res, payload) => res.json(payload);
+const bad = (res, code, msg, extra={}) => res.status(code).json({ error: msg, ...extra });
+
+const readZones  = () => { try { return JSON.parse(fs.readFileSync(ZONES_FILE,'utf8')); } catch { return { zones: [], updated_at:null }; } };
+const writeZones = (obj) => { obj.updated_at = new Date().toISOString(); fs.writeFileSync(ZONES_FILE, JSON.stringify(obj,null,2)); };
+const readSettings = () => { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE,'utf8')); } catch { return { settings:{} }; } };
+const writeSettings = (obj) => { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(obj,null,2)); };
+
+function normalizeLonLat(a,b){
+  if (Array.isArray(a)) { const [x,y] = a; if (Math.abs(x)<=90 && Math.abs(y)<=180) return [y,x]; return [x,y]; }
+  if (Math.abs(a)<=90 && Math.abs(b)<=180) return [b,a]; return [a,b];
+}
+function pointInPolygon(lng, lat, polygon) {
+  if (!Array.isArray(polygon) || polygon.length < 3) return false;
+  let inside = false;
+  for (let i=0, j=polygon.length-1; i<polygon.length; j=i++) {
+    const xi = polygon[i][0], yi = polygon[i][1];
+    const xj = polygon[j][0], yj = polygon[j][1];
+    const intersect = ((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi + 1e-12) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+// ----- Express -----
+const app = express();
+app.use(bodyParser.json({ limit: '1mb' }));
+
+// Permissive CORS while iterating
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Token, ngrok-skip-browser-warning');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// Health
+app.get('/api/health', (req,res)=> ok(res, { ok:true, env:SQUARE_ENV || 'production' }));
+app.get('/health',     (req,res)=> ok(res, { ok:true, env:SQUARE_ENV || 'production' }));
+
+// ----- Settings -----
+app.get('/api/admin/settings', (req,res)=> { try { ok(res, readSettings()); } catch { ok(res, { settings:{} }); } });
+app.post('/api/admin/settings', (req,res)=> { try { const inc = req.body||{}; const payload = inc.settings && typeof inc.settings==='object' ? inc.settings : inc; writeSettings({ settings: payload }); ok(res, { ok:true, settings: payload }); } catch(e){ bad(res,500,'Failed to save settings',{ detail:String(e) }); } });
+app.get('/api/settings', (req,res)=> {
+  try {
+    const j = readSettings();
+    ok(res, {
+      businessHours: {
+        days: Array.from({length:7}, (_,i)=>{
+          const d = j.settings?.weekly?.[i] || { enabled:true, open:'11:00', close:'22:00' };
+          return { open:d.open||'11:00', close:d.close||'22:00', closed: !d.enabled };
+        }),
+        leadTimeMinutes: Number(j.settings?.slotConfig?.collection?.min_lead_minutes || 30),
+        allowPreorderDays: 1,
+        closed: !!j.settings?.manualClosed,
+        reopenAt: j.settings?.reopenAt || null
+      },
+      slotConfig: j.settings?.slotConfig || {}
+    });
+  } catch (e) { bad(res,500,'settings failed',{ detail:String(e) }); }
+});
+
+// ----- Zones (polygon model) -----
+app.get('/api/zonesAdminV2', (req,res)=> {
+  const activeOnly = String(req.query.activeOnly||'false').toLowerCase() === 'true';
+  const j = readZones();
+  const zones = (j.zones||[]).filter(z => activeOnly ? z.active !== false : true);
+  ok(res, { ok:true, zones, updated_at: j.updated_at });
+});
+app.post('/api/zonesAdminV2', (req,res)=> {
+  try {
+    const b = req.body || {};
+    if (!b || !b.name) return bad(res,400,'name required');
+    const j = readZones(); let zones = j.zones || [];
+    const ring = Array.isArray(b.polygon?.coordinates?.[0]) ? b.polygon.coordinates[0]
+              : Array.isArray(b.polygon) ? b.polygon
+              : Array.isArray(b.ring) ? b.ring
+              : Array.isArray(b.coordinates) ? b.coordinates
+              : null;
+    const polygon = Array.isArray(ring) ? { type:'Polygon', coordinates:[ ring.map(pt => normalizeLonLat(pt)) ] } : undefined;
+
+    if (b.id) {
+      const idx = zones.findIndex(z => z.id === b.id);
+      if (idx >= 0) zones[idx] = { ...zones[idx], name:b.name, price_pence:Number(b.price_pence||0)|0, active:b.active!==false, ...(polygon?{polygon}:{}) };
+      else zones.push({ id:String(b.id), name:b.name, price_pence:Number(b.price_pence||0)|0, active:b.active!==false, ...(polygon?{polygon}:{}) });
+    } else {
+      zones.push({ id: randomUUID(), name:b.name, price_pence:Number(b.price_pence||0)|0, active:b.active!==false, ...(polygon?{polygon}:{}) });
+    }
+    writeZones({ zones });
+    ok(res, { ok:true });
+  } catch (e) { bad(res,500,'save zone failed',{ detail:String(e) }); }
+});
+app.put('/api/zonesAdminV2', (req,res)=> {
+  try {
+    const id = String(req.query.id || req.body?.id || '').trim();
+    if (!id) return bad(res,400,'id required');
+    const b = req.body || {};
+    const j = readZones(); const zones = j.zones || [];
+    const idx = zones.findIndex(z => z.id === id);
+    if (idx < 0) return bad(res,404,'not found');
+
+    const ring = Array.isArray(b.polygon?.coordinates?.[0]) ? b.polygon.coordinates[0]
+              : Array.isArray(b.polygon) ? b.polygon
+              : Array.isArray(b.ring) ? b.ring
+              : Array.isArray(b.coordinates) ? b.coordinates
+              : null;
+    const polygon = Array.isArray(ring) ? { type:'Polygon', coordinates:[ ring.map(pt => normalizeLonLat(pt)) ] } : undefined;
+
+    zones[idx] = { ...zones[idx],
+      ...(b.name ? { name:b.name } : {}),
+      ...(b.price_pence!=null ? { price_pence:Number(b.price_pence)|0 } : {}),
+      ...(b.active!=null ? { active: !!b.active } : {}),
+      ...(polygon ? { polygon } : {})
+    };
+    writeZones({ zones });
+    ok(res, { ok:true });
+  } catch (e) { bad(res,500,'update zone failed',{ detail:String(e) }); }
+});
+app.delete('/api/zonesAdminV2', (req,res)=> {
+  try {
+    const id = String(req.query.id || '').trim();
+    if (!id) return bad(res,400,'id required');
+    const j = readZones(); const zones = (j.zones||[]).filter(z => z.id !== id);
+    if (zones.length === (j.zones||[]).length) return bad(res,404,'not found');
+    writeZones({ zones }); ok(res, { ok:true, deleted:id });
+  } catch (e) { bad(res,500,'delete failed',{ detail:String(e) }); }
+});
+app.get('/api/zonesPublic', (req,res)=> {
+  const activeOnly = String(req.query.activeOnly||'true').toLowerCase() === 'true';
+  const j = readZones();
+  const zones = (j.zones||[]).filter(z => activeOnly ? z.active !== false : true);
+  ok(res, { zones });
+});
+app.get('/api/zones', (req,res)=> ok(res, readZones()));
+
+// ----- Geocoding -----
+async function geocodeGB(postcode){
+  try{
+    const pc = String(postcode||'').trim();
+    if (!pc) return null;
+    if (GOOGLE_MAPS_KEY) {
+      const u = new URL('https://maps.googleapis.com/maps/api/geocode/json');
+      u.searchParams.set('address', pc);
+      u.searchParams.set('components','country:GB');
+      u.searchParams.set('key', GOOGLE_MAPS_KEY);
+      const r = await fetch(u.toString()); const j = await r.json().catch(()=>null);
+      const loc = j?.results?.[0]?.geometry?.location;
+      if (loc && typeof loc.lat==='number' && typeof loc.lng==='number') return { lat:loc.lat, lng:loc.lng, formatted:j.results[0].formatted_address||pc };
+    }
+    const u2 = new URL('https://api.postcodes.io/postcodes/' + encodeURIComponent(pc.replace(/\s+/g,'')));
+    const r2 = await fetch(u2.toString()); const j2 = await r2.json().catch(()=>null);
+    const res = j2 && j2.status===200 && j2.result;
+    if (res && typeof res.latitude==='number' && typeof res.longitude==='number') return { lat:res.latitude, lng:res.longitude, formatted:res.postcode||pc };
+  }catch{}
+  return null;
+}
+app.get('/api/geocode', async (req,res)=>{
+  try{
+    const out = await geocodeGB(req.query.postcode || '');
+    if (!out) return ok(res, { ok:false, hits:0 });
+    ok(res, { ok:true, hits:1, lat:out.lat, lng:out.lng, formatted:out.formatted });
+  }catch(e){ bad(res,502,'geocode failed',{ detail:String(e) }); }
+});
+
+// ----- Delivery price (polygon match) -----
+app.post('/api/delivery-price', async (req,res)=>{
+  try{
+    const body = req.body || {};
+    let { lat, lng, postcode } = body;
+    if ((lat==null || lng==null) && postcode) {
+      const g = await geocodeGB(postcode);
+      if (g) { lat = g.lat; lng = g.lng; }
+    }
+    if (lat==null || lng==null) return ok(res, { deliverable:false, reason:'no_location' });
+    const [LNG, LAT] = normalizeLonLat(lat, lng);
+    const zones = (readZones().zones || []).filter(z => z.active !== false);
+    let best = null;
+    for (const z of zones) {
+      const ring = z?.polygon?.coordinates?.[0];
+      if (Array.isArray(ring) && ring.length >= 3) {
+        const norm = ring.map(pt => normalizeLonLat(pt));
+        if (pointInPolygon(LNG, LAT, norm)) {
+          if (!best || ((z.price_pence|0) < (best.price_pence|0))) best = z;
+        }
+      }
+    }
+    if (!best) return ok(res, { deliverable:false, reason:'out_of_area' });
+    return ok(res, { deliverable:true, price_pence: best.price_pence|0, zoneName: best.name||'', zone_id: best.id });
+  } catch (e) { bad(res,500,'delivery calculation failed',{ detail:String(e) }); }
+});
+
+// ----- Receipt helpers -----
+function ordinalDay(d){ const n=d.getDate(); const s=['th','st','nd','rd']; const v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); }
+function formatRequested(iso){ try{ const d=new Date(iso); return `${ordinalDay(d)} ${d.toLocaleString('en-GB',{month:'short'})} ${d.toLocaleString('en-GB',{hour:'numeric',minute:'2-digit',hour12:false})}`; }catch{return '';} }
+const padMoney = p => `£${(Number(p||0)/100).toFixed(2)}`;
+function leftRight(l,r,width=63){ l=String(l??''); r=String(r??''); const dots=Math.max(1,width-l.length-r.length); return l+' '.repeat(dots)+r; }
+function renderReceipt(payload){
+  const { meta={}, customer={}, items=[], delivery_fee_pence=0 } = payload;
+  const lines = [];
+  const fulfil = String(meta.fulfilment || '').toUpperCase();
+  const requested = meta.requested_at ? `\n                  Requested: ${formatRequested(meta.requested_at)}` : '';
+  lines.push(leftRight(`                           ${fulfil || 'ORDER'}`, '')); if (requested) lines.push(requested);
+  const addrLines = (customer.address_lines || []);
+  lines.push(''); lines.push(`Name:   ${customer.name || ''}`); lines.push(`Phone:  ${customer.phone || ''}`);
+  if (addrLines.length){ lines.push(`Address: ${addrLines[0] || ''}`); for (let i=1;i<addrLines.length;i++) lines.push(`         ${addrLines[i] || ''}`); }
+  lines.push('---------------------------------------------------------------');
+  let subtotal = 0;
+  for (const it of items) {
+    const qty=Number(it.quantity||1), unit=Number(it.unit_pence||0);
+    const modsExtra=(it.modifiers||[]).reduce((s,m)=>s+Number(m.extra_pence||0),0);
+    const linePence = qty * (unit + modsExtra); subtotal += linePence;
+    lines.push(leftRight(it.name || 'Item', padMoney(linePence)));
+    if (it.variant && (it.variant.group || it.variant.choice)) lines.push(`${String(it.variant.group||'').toUpperCase()}: ${it.variant.choice||''}`);
+    for (const m of (it.modifiers||[])) {
+      const group=String(m.group||'').toUpperCase(); const choices=Array.isArray(m.choices)?m.choices.join(', '):''; if (group || choices) lines.push(`${group}: ${choices}`);
+    }
+    lines.push('');
+  }
+  lines.push('---------------------------------------------------------------');
+  lines.push(leftRight('SUBTOTAL:', padMoney(subtotal)));
+  if (delivery_fee_pence) lines.push(leftRight('DELIVERY FEE:', padMoney(delivery_fee_pence)));
+  lines.push(leftRight('TOTAL:', padMoney(subtotal + Number(delivery_fee_pence || 0))));
+  return lines.join('\n');
+}
+
+// ----- Square helpers -----
+async function getLocationId() {
+  if (STATIC_LOCATION_ID) return STATIC_LOCATION_ID;
+  if (!client) throw new Error('Square client not initialised');
+  const { locationsApi } = client;
+  const r = await locationsApi.listLocations();
+  const active = (r.result.locations||[]).find(l => l.status === 'ACTIVE');
+  return active ? active.id : (r.result.locations?.[0]?.id);
+}
+function buildOrderFromPayload(payload, locationId){
+  const currency = payload.currency || 'GBP';
+  const lineItems = (payload.items||[]).map(it => {
+    const qty = String(it.quantity || 1);
+    const base = Number(it.unit_pence || 0);
+    const modsExtra = (it.modifiers||[]).reduce((s,m)=>s+Number(m.extra_pence||0),0);
+    const unit = base + modsExtra;
+    return {
+      name: it.name || 'Item',
+      quantity: qty,
+      basePriceMoney: { amount: Number(unit), currency }
+    };
+  });
+  if (Number(payload.delivery_fee_pence||0) > 0) {
+    lineItems.push({
+      name: 'Delivery',
+      quantity: '1',
+      basePriceMoney: { amount: Number(payload.delivery_fee_pence), currency }
+    });
+  }
+  if (!lineItems.length && payload.total_pence != null) {
+    lineItems.push({
+      name: payload.title || 'Order total',
+      quantity: '1',
+      basePriceMoney: { amount: Number(payload.total_pence), currency }
+    });
+  }
+  return { locationId, lineItems };
+}
+function sumOrderTotal(orderObj){
+  return orderObj.lineItems.reduce((s, li) => s + Number(li.basePriceMoney?.amount||0) * Number(li.quantity||1), 0);
+}
+function squareApiBase(){
+  return (SQUARE_ENV === 'sandbox') ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
+}
+async function createPaymentLinkViaHttp(orderObj, quickName, redirectUrl){
+  if (!SQUARE_ACCESS_TOKEN) throw new Error('Missing SQUARE_ACCESS_TOKEN');
+  const total = sumOrderTotal(orderObj);
+  const currency = orderObj.lineItems?.[0]?.basePriceMoney?.currency || 'GBP';
+
+  const body = {
+    idempotency_key: randomUUID(),
+    quick_pay: {
+      name: quickName || 'Barnwell Grill Order',
+      price_money: { amount: Number(total), currency },
+      location_id: orderObj.locationId
+    },
+    checkout_options: { redirect_url: redirectUrl }
+  };
+
+  const resp = await fetch(`${squareApiBase()}/v2/online-checkout/payment-links`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${SQUARE_ACCESS_TOKEN}`,
+      'Square-Version': '2024-06-20',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+  const json = await resp.json().catch(()=>null);
+  if (!resp.ok) {
+    const msg = json && json.errors ? JSON.stringify(json.errors) : `HTTP ${resp.status}`;
+    throw new Error(`HTTP payment-links failed: ${msg}`);
+  }
+  const url = json?.payment_link?.url;
+  if (!url) throw new Error('HTTP payment-links returned no URL');
+  return { url, method: 'http.quickPay' };
+}
+
+async function createPaymentLinkAny(orderObj, quickName, redirectUrl){
+  // Try SDK paths, then HTTP fallback
+  try {
+    if (client?.paymentLinksApi?.createPaymentLink) {
+      const total = sumOrderTotal(orderObj);
+      const currency = orderObj.lineItems?.[0]?.basePriceMoney?.currency || 'GBP';
+      const body = {
+        idempotencyKey: randomUUID(),
+        quickPay: { name: quickName || 'Barnwell Grill Order', priceMoney: { amount: Number(total), currency }, locationId: orderObj.locationId },
+        checkoutOptions: { redirectUrl }
+      };
+      const resp = await client.paymentLinksApi.createPaymentLink(body);
+      const url = resp.result?.paymentLink?.url;
+      if (url) return { url, method: 'sdk.paymentLinks.quickPay' };
+    }
+  } catch (e) { console.error('[Square SDK] paymentLinksApi failed', e?.errors || e?.message || e); }
+
+  try {
+    if (client?.checkoutApi?.createPaymentLink) {
+      const total = sumOrderTotal(orderObj);
+      const currency = orderObj.lineItems?.[0]?.basePriceMoney?.currency || 'GBP';
+      const body = {
+        idempotencyKey: randomUUID(),
+        quickPay: { name: quickName || 'Barnwell Grill Order', priceMoney: { amount: Number(total), currency }, locationId: orderObj.locationId },
+        checkoutOptions: { redirectUrl }
+      };
+      const resp = await client.checkoutApi.createPaymentLink(body);
+      const url = resp.result?.paymentLink?.url || resp.result?.checkout?.checkoutPageUrl;
+      if (url) return { url, method: 'sdk.checkout.createPaymentLink.quickPay' };
+    }
+  } catch (e) { console.error('[Square SDK] checkoutApi.createPaymentLink failed', e?.errors || e?.message || e); }
+
+  try {
+    if (client?.checkoutApi?.createCheckout) {
+      const body = {
+        idempotencyKey: randomUUID(),
+        order: { idempotencyKey: randomUUID(), order: orderObj },
+        redirectUrl,
+        note: quickName || 'Barnwell Grill Order'
+      };
+      const resp = await client.checkoutApi.createCheckout(orderObj.locationId, body);
+      const url = resp.result?.checkout?.checkoutPageUrl;
+      if (url) return { url, method: 'sdk.checkout.createCheckout.twoArg' };
+    }
+  } catch (e) { console.error('[Square SDK] checkoutApi.createCheckout(twoArg) failed', e?.errors || e?.message || e); }
+
+  // HTTP fallback
+  return await createPaymentLinkViaHttp(orderObj, quickName, redirectUrl);
+}
+
+// ----- Checkout endpoint -----
+app.post('/api/create-checkout-link', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const locationId = await getLocationId();
+    const orderObj = buildOrderFromPayload(payload, locationId);
+
+    const origin = (req.headers.origin || 'https://barnwellgrill.gbapps.cmslogin.io').replace(/\/+$/,'');
+    const redirectUrl = CHECKOUT_RETURN_URL || `${origin}/ordering?paid=1`;
+
+    const { url, method } = await createPaymentLinkAny(orderObj, payload.title, redirectUrl);
+    const printable_receipt = renderReceipt(payload);
+    ok(res, { ok:true, url, method, location_id: locationId, printable_receipt });
+  } catch (err) {
+    console.error('checkout error', err);
+    const code = (err && (err.statusCode || err.code)) || (err instanceof SquareApiError ? err.statusCode : undefined);
+    bad(res, 500, 'create checkout failed', { code, detail: String(err && (err.message || err)) });
+  }
+});
+
+// ----- Start -----
+app.listen(PORT, () => console.log(`barnwell-proxy listening on :${PORT}`));

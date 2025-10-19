@@ -1,0 +1,344 @@
+/* Barnwell Grill Proxy — CORS + Catalog + Settings + Zones + Geocode + Quotes + Square + Return-session */
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const fetch = (...a) => import('node-fetch').then(({default: f}) => f(...a));
+
+/* ---------- ENV ---------- */
+const PORT = process.env.PORT || 8080;
+const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN || '';
+const SQUARE_LOCATION_ID  = process.env.SQUARE_LOCATION_ID  || '';
+const ADMIN_TOKEN         = process.env.ADMIN_TOKEN || '2025BARNWELLAPP';
+const PUBLIC_RETURN_URL   = process.env.RETURN_URL || 'https://barnwellgrill.goodbarber.app/ordering';
+
+const app = express();
+app.use(express.json({ limit: '2mb' }));
+
+/* ---------- CORS ---------- */
+const ALLOWED_ORIGINS = new Set([
+  'https://barnwellgrill.gbapps.cmslogin.io',
+  'https://barnwellgrill.goodbarber.app',
+  'http://localhost:3000',
+]);
+const corsOpts = {
+  origin: (origin, cb) => (!origin || ALLOWED_ORIGINS.has(origin)) ? cb(null, true) : cb(new Error('Not allowed by CORS')),
+  credentials: true,
+  allowedHeaders: ['Content-Type','x-admin-token','ngrok-skip-browser-warning','accept'],
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  maxAge: 600,
+};
+app.use(cors(corsOpts));
+app.options('*', cors(corsOpts));
+
+/* ---------- STORAGE ---------- */
+const DATA_DIR = '/var/lib/barnwell-proxy';
+const FILES = {
+  settings:  path.join(DATA_DIR, 'settings.json'),
+  zones:     path.join(DATA_DIR, 'zones.json'),
+  checkouts: path.join(DATA_DIR, 'checkouts.json'),
+};
+function ensureFiles(){
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive:true });
+  if (!fs.existsSync(FILES.settings)) fs.writeFileSync(FILES.settings, JSON.stringify({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    businessHours: {
+      days: Array.from({length:7},()=>({open:'11:00',close:'22:00',closed:false})),
+      leadTimeMinutes: 30,
+      allowPreorderDays: 1,
+      closed: false,
+      reopenAt: null,
+    },
+    slotConfig: {
+      collection:{ granularity_minutes:60, min_lead_minutes:30, min_order_pence:800 },
+      delivery:{   granularity_minutes:60, min_lead_minutes:45, min_order_pence:1200 }
+    },
+    manualClosedUntil: null
+  }, null, 2));
+  if (!fs.existsSync(FILES.zones)) fs.writeFileSync(FILES.zones, JSON.stringify({ zones: [] }, null, 2));
+  if (!fs.existsSync(FILES.checkouts)) fs.writeFileSync(FILES.checkouts, JSON.stringify({ sessions: {} }, null, 2));
+}
+ensureFiles();
+
+const readJSON  = f => { try { return JSON.parse(fs.readFileSync(f,'utf8')); } catch { return null; } };
+const writeJSON = (f, v) => fs.writeFileSync(f, JSON.stringify(v, null, 2));
+
+/* ---------- HELPERS ---------- */
+const uid = () => crypto.randomBytes(8).toString('hex');
+const money = p => ({ amount: Number(p||0), currency: 'GBP' });
+function normalizePhoneUK(raw){
+  let s = String(raw||'').trim().replace(/[^\d+]/g,'');
+  if (!s) return '';
+  if (s.startsWith('00')) s = '+' + s.slice(2);
+  if (s.startsWith('0')) s = '+44' + s.slice(1);
+  if (!s.startsWith('+')) s = '+44' + s;
+  return s;
+}
+function splitName(full){
+  const t = String(full||'').trim().split(/\s+/);
+  if (t.length === 0) return { first_name:'', last_name:'' };
+  if (t.length === 1) return { first_name:t[0], last_name:'' };
+  return { first_name: t[0], last_name: t.slice(1).join(' ') };
+}
+function truncate(s, n){ s = String(s||''); return s.length > n ? s.slice(0, n) : s; }
+function compactOneLine(s){ return String(s||'').replace(/\s+/g,' ').trim(); }
+
+/* Try to coerce a single-line GB address into Square's structured address */
+function splitAddressFreeform(addr){
+  const out = { address_line_1:'', address_line_2:'', locality:'', postal_code:'', country:'GB' };
+  const t = String(addr||'').split(',').map(s=>s.trim()).filter(Boolean);
+  if (!t.length) return out;
+  // assume last token with a space and digits is postcode
+  const pcIdx = t.findLastIndex(x => /\b[A-Z]{1,2}\d[A-Z0-9]?\s*\d[A-Z]{2}\b/i.test(x));
+  if (pcIdx >= 0) { out.postal_code = t[pcIdx].toUpperCase().replace(/\s+/,' '); t.splice(pcIdx,1); }
+  if (t.length) out.locality = t[t.length-1];
+  if (t.length > 1) { out.address_line_1 = t[0]; out.address_line_2 = t.slice(1, -1).join(', '); }
+  else { out.address_line_1 = t[0]; }
+  return out;
+}
+
+/* ---------- HEALTH ---------- */
+app.get('/health', (_req,res)=> res.json({ ok:true }));
+
+/* ---------- SETTINGS ---------- */
+app.get('/api/settings', (_req,res) => res.json(readJSON(FILES.settings) || {}));
+app.get('/api/admin/settings', (req,res)=>{
+  if ((req.get('x-admin-token')||'') !== ADMIN_TOKEN) return res.status(401).json({ error:'Unauthorized' });
+  res.json(readJSON(FILES.settings) || {});
+});
+app.post('/api/admin/settings', (req,res)=>{
+  if ((req.get('x-admin-token')||'') !== ADMIN_TOKEN) return res.status(401).json({ error:'Unauthorized' });
+  const cur = readJSON(FILES.settings) || {};
+  const next = Object.assign({}, cur, req.body||{}, { updatedAt: new Date().toISOString() });
+  writeJSON(FILES.settings, next);
+  res.json({ ok:true });
+});
+
+/* ---------- ZONES ---------- */
+app.get('/api/zonesPublic', (_req,res)=>{
+  const z = readJSON(FILES.zones) || { zones: [] };
+  res.json({ zones: (z.zones||[]).filter(x=>x.active!==false) });
+});
+app.get('/api/zones', (_req,res)=>{
+  const z = readJSON(FILES.zones) || { zones: [] };
+  res.json({ zones: z.zones||[] });
+});
+app.get('/api/zonesAdminV2', (req,res)=>{
+  const tok = req.get('x-admin-token') || '';
+  const activeOnly = String(req.query.activeOnly||'true') === 'true';
+  const z = readJSON(FILES.zones) || { zones: [] };
+  const data = activeOnly ? (z.zones||[]).filter(x=>x.active!==false) : (z.zones||[]);
+  if (tok !== ADMIN_TOKEN) return res.json({ zones: data.filter(x=>x.active!==false) });
+  res.json({ zones: data });
+});
+app.post('/api/zonesAdminV2', (req,res)=>{
+  if ((req.get('x-admin-token')||'') !== ADMIN_TOKEN) return res.status(401).json({ error:'Unauthorized' });
+  const body = req.body || {};
+  const store = readJSON(FILES.zones) || { zones: [] };
+  let zones = store.zones||[];
+  if (body.id) zones = zones.map(z => z.id===body.id ? Object.assign({}, z, body) : z);
+  else { body.id = uid(); zones.push(Object.assign({ active:true }, body)); }
+  writeJSON(FILES.zones, { zones });
+  res.json({ ok:true, id: body.id });
+});
+app.delete('/api/zonesAdminV2', (req,res)=>{
+  if ((req.get('x-admin-token')||'') !== ADMIN_TOKEN) return res.status(401).json({ error:'Unauthorized' });
+  const id = String(req.query.id||'');
+  const store = readJSON(FILES.zones) || { zones: [] };
+  writeJSON(FILES.zones, { zones: (store.zones||[]).filter(z=>z.id!==id) });
+  res.json({ ok:true });
+});
+
+/* ---------- CATALOG proxy ---------- */
+const CF_BASES = [
+  'https://us-central1-barnwell-grill.cloudfunctions.net',
+  'https://europe-west2-barnwell-grill.cloudfunctions.net',
+  'https://europe-west1-barnwell-grill.cloudfunctions.net',
+];
+app.get('/api/catalogEverything', async (req,res)=>{
+  try{
+    const types = req.query.types || 'ITEM,ITEM_VARIATION,CATEGORY,MODIFIER_LIST,ITEM_OPTION';
+    const paths = ['/getCatalog','/catalog'];
+    let lastError = null;
+    for(const base of CF_BASES){
+      for(const p of paths){
+        const url = `${base}${p}?types=${encodeURIComponent(types)}`;
+        try{
+          const r = await fetch(url, { headers: { 'Accept':'application/json' } });
+          const txt = await r.text();
+          if(!r.ok) { lastError = `HTTP ${r.status} ${r.statusText} — ${txt}`; continue; }
+          try{
+            const j = JSON.parse(txt);
+            res.setHeader('Content-Type','application/json');
+            return res.send(JSON.stringify(j));
+          }catch{ lastError = 'Invalid JSON from upstream'; }
+        }catch(e){ lastError = e.message || String(e); }
+      }
+    }
+    res.status(502).json({ error:'catalog upstream failed', detail:lastError });
+  }catch{ res.status(500).json({ error:'catalog proxy error' }); }
+});
+
+/* ---------- GEOCODE ---------- */
+app.get('/api/geocode', async (req,res)=>{
+  try{
+    const q = String(req.query.postcode||req.query.q||'').trim();
+    if(!q) return res.json({ results: [] });
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`;
+    const r = await fetch(url, { headers:{ 'User-Agent':'barnwell-proxy' } });
+    const j = await r.json();
+    if (!Array.isArray(j) || !j.length) return res.json({ results: [] });
+    const first = j[0];
+    res.json({ results: [{ formatted_address: q.toUpperCase(), geometry: { location: { lat: Number(first.lat), lng: Number(first.lon) } } }] });
+  }catch{ res.json({ results: [] }); }
+});
+
+/* ---------- QUOTE ---------- */
+app.post('/api/delivery-price', (req,res)=>{
+  try{
+    const zones = (readJSON(FILES.zones)||{zones:[]}).zones||[];
+    const lat = Number(req.body?.lat), lng = Number(req.body?.lng);
+    if (!isFinite(lat) || !isFinite(lng)) return res.json({ deliverable:false });
+    const pointInRing = (x, y, ring) => {
+      if(!Array.isArray(ring) || ring.length<3) return false;
+      let inside=false;
+      for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+        const xi=Number(ring[i][0]), yi=Number(ring[i][1]);
+        const xj=Number(ring[j][0]), yj=Number(ring[j][1]);
+        const intersect=((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi);
+        if(intersect) inside=!inside;
+      }
+      return inside;
+    };
+    for(const z of zones){
+      if(z.active===false) continue;
+      const ring = z?.polygon?.coordinates?.[0] || z.ring || z.coordinates || null;
+      if(!Array.isArray(ring)) continue;
+      if(pointInRing(lng, lat, ring)) {
+        const price = Number(z.price_pence ?? Math.round((z.price||0)*100));
+        return res.json({ deliverable:true, matched:true, price_pence: price, zoneName: z.name||z.id||'Zone' });
+      }
+    }
+    res.json({ deliverable:false });
+  }catch{ res.json({ deliverable:false }); }
+});
+
+/* ---------- SQUARE: create checkout link ---------- */
+app.post('/api/create-checkout-link', async (req,res)=>{
+  try{
+    const body = req.body||{};
+    const items = Array.isArray(body.items)? body.items : [];
+    if(!items.length) return res.status(400).json({ error:'No line items' });
+
+    const name = String(body.meta?.customer?.name || '').trim();
+    const { first_name, last_name } = splitName(name);
+    const email = String(body.meta?.customer?.email || '').trim();
+    const phone = normalizePhoneUK(body.meta?.customer?.phone || '');
+    const addrText = String(body.meta?.address || '').trim();
+    const fulfilment = String(body.meta?.fulfilment||'delivery');
+    const scheduled_at = body.meta?.scheduled_at || null;
+
+    const orderLineItems = items.map(it => ({
+      name: it.name,
+      quantity: String(it.quantity||1),
+      base_price_money: money(it.unit_pence||0),
+    }));
+
+    const deliveryFeePence = Number(body.delivery_fee_pence||0);
+    if(fulfilment==='delivery' && deliveryFeePence>0){
+      orderLineItems.push({ name: 'Delivery', quantity: '1', base_price_money: money(deliveryFeePence) });
+    }
+
+    // Short human note and safe metadata
+    const shortWhen = scheduled_at ? new Date(scheduled_at).toLocaleString() : 'ASAP';
+    const shortAddr = fulfilment==='delivery' ? compactOneLine(addrText) : '';
+    const shortNote = truncate(
+      compactOneLine(`${fulfilment.toUpperCase()} — ${shortWhen} — ${name} ${phone}${shortAddr? ' — '+shortAddr:''}`),
+      450
+    );
+    const fullSummary = String(body.meta?.summary||'');
+    const metaSummary255 = truncate(fullSummary, 255);
+
+    // Fulfilment
+    const recipient = { display_name: name || undefined, phone_number: phone || undefined };
+    if (fulfilment === 'delivery' && addrText) {
+      const parsed = splitAddressFreeform(addrText);
+      recipient.address = {
+        address_line_1: parsed.address_line_1 || undefined,
+        address_line_2: parsed.address_line_2 || undefined,
+        locality: parsed.locality || undefined,
+        postal_code: parsed.postal_code || undefined,
+        country: 'GB'
+      };
+    }
+    const orderFulfillment = fulfilment==='collection'
+      ? { type:'PICKUP', state:'PROPOSED', pickup_details: { pickup_at: scheduled_at || undefined } }
+      : { type:'SHIPMENT', state:'PROPOSED', shipment_details: { recipient } };
+
+    const sqBody = {
+      idempotency_key: uid(),
+      order: {
+        location_id: SQUARE_LOCATION_ID,
+        line_items: orderLineItems,
+        state: 'OPEN',
+        fulfillments: [orderFulfillment],
+        note: shortNote,
+        metadata: { _src: 'barnwell-proxy', _summary: metaSummary255 }
+      },
+      pre_populated_data: {
+        buyer_email_address: email || undefined,
+        buyer_phone_number: phone || undefined,
+        given_name: first_name || undefined,
+        family_name: last_name || undefined
+      },
+      checkout_options: {
+        allow_tipping: false,
+        redirect_url: `${PUBLIC_RETURN_URL}?session=${encodeURIComponent(Date.now().toString(36)+uid())}`,
+        ask_for_shipping_address: fulfilment === 'delivery'
+      }
+    };
+
+    const r = await fetch('https://connect.squareup.com/v2/online-checkout/payment-links', {
+      method:'POST',
+      headers:{ 'Authorization': `Bearer ${SQUARE_ACCESS_TOKEN}`, 'Content-Type':'application/json' },
+      body: JSON.stringify(sqBody)
+    });
+    const j = await r.json();
+    if(!r.ok) return res.status(400).json({ error:`Square create payment link failed: ${JSON.stringify(j.errors||j)}` });
+
+    // Save return session (full summary)
+    const store = readJSON(FILES.checkouts) || { sessions:{} };
+    const sessionId = new URL(sqBody.checkout_options.redirect_url).searchParams.get('session');
+    store.sessions[sessionId] = {
+      at: Date.now(),
+      fulfilment, name, email, phone,
+      address: addrText || null,
+      items,
+      delivery_fee_pence: deliveryFeePence,
+      scheduled_at,
+      summary: fullSummary
+    };
+    writeJSON(FILES.checkouts, store);
+
+    res.json({ ok:true, url: j.payment_link?.url || j.checkout?.checkout_page_url || '' });
+  }catch(e){
+    console.error('create-checkout-link failed', e);
+    res.status(500).json({ error:'Server error' });
+  }
+});
+
+/* ---------- return-session ---------- */
+app.get('/api/checkout-session', (req,res)=>{
+  const id = String(req.query.id||'');
+  const store = readJSON(FILES.checkouts) || { sessions:{} };
+  res.json({ ok: !!store.sessions[id], payload: store.sessions[id] || null });
+});
+app.get('/api/checkout/session/:id', (req,res)=>{
+  const id = String(req.params.id||'');
+  const store = readJSON(FILES.checkouts) || { sessions:{} };
+  res.json({ ok: !!store.sessions[id], payload: store.sessions[id] || null });
+});
+
+app.listen(PORT, ()=> console.log(`barnwell-proxy listening on :${PORT}`));

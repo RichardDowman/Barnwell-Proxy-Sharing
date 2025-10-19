@@ -1,0 +1,88 @@
+{
+  "merchant_id": "MLRVNNTQGEETM",
+  "type": "payment.updated",
+  "event_id": "979ac76a-fcca-32c5-a330-a4d1f2996f5a",
+  "created_at": "2025-10-10T19:02:15.997Z",
+  "data": {
+    "type": "payment",
+    "id": "TZE8TCryRmdNGrNzwgvbfEFSVlFZY",
+    "object": {
+      "payment": {
+        "amount_money": {
+          "amount": 2350,
+          "currency": "GBP"
+        },
+        "application_details": {
+          "application_id": "sq0idp-w46nJ_NCNDMSOywaCY0mwA",
+          "square_product": "ECOMMERCE_API"
+        },
+        "approved_money": {
+          "amount": 2350,
+          "currency": "GBP"
+        },
+        "billing_address": {
+          "address_line_1": "Foxholes Farm",
+          "address_line_2": "Roman Road",
+          "country": "GB",
+          "first_name": "Andrew",
+          "last_name": "Sainsbury",
+          "locality": "Titchmarsh",
+          "postal_code": "NN14 3DP"
+        },
+        "buyer_email_address": "wil_sainsbury@hotmail.com",
+        "card_details": {
+          "auth_result_code": "726219",
+          "avs_status": "AVS_ACCEPTED",
+          "card": {
+            "bin": "516856",
+            "card_brand": "MASTERCARD",
+            "card_type": "DEBIT",
+            "exp_month": 12,
+            "exp_year": 2027,
+            "fingerprint": "sq-1-rTlsRCsw6rvwzAfYri3sGd_wtvC9oMFmN-ekRkO8gbyOZn8W_BTo1NgMiVK9oCZR7A",
+            "last_4": "2658",
+            "payment_account_reference": "50011THD7F21Y1WY8YF0L2UXF8Q1E",
+            "prepaid_type": "NOT_PREPAID"
+          },
+          "card_payment_timeline": {
+            "authorized_at": "2025-10-10T19:02:13.893Z",
+            "captured_at": "2025-10-10T19:02:14.218Z"
+          },
+          "cvv_status": "CVV_NOT_CHECKED",
+          "entry_method": "KEYED",
+          "statement_description": "SQ *BARNWELL PIZZA AND G",
+          "status": "CAPTURED"
+        },
+        "created_at": "2025-10-10T19:02:13.187Z",
+        "delay_action": "CANCEL",
+        "delay_duration": "PT168H",
+        "delayed_until": "2025-10-17T19:02:13.187Z",
+        "id": "TZE8TCryRmdNGrNzwgvbfEFSVlFZY",
+        "location_id": "L0R86R4QCD2NF",
+        "order_id": "UbfAjOIJsjWSAgTM5p1GmjYP4xUZY",
+        "receipt_number": "TZE8",
+        "receipt_url": "https://squareup.com/receipt/preview/TZE8TCryRmdNGrNzwgvbfEFSVlFZY",
+        "risk_evaluation": {
+          "created_at": "2025-10-10T19:02:14.086Z",
+          "risk_level": "NORMAL"
+        },
+        "shipping_address": {
+          "first_name": "Andrew",
+          "last_name": "Sainsbury"
+        },
+        "source_type": "CARD",
+        "status": "COMPLETED",
+        "tip_money": {
+          "amount": 0,
+          "currency": "GBP"
+        },
+        "total_money": {
+          "amount": 2350,
+          "currency": "GBP"
+        },
+        "updated_at": "2025-10-10T19:02:15.984Z",
+        "version": 3
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "when": "2025-10-02T23:00:55.836Z",
+  "method": "HEAD",
+  "query": {},
+  "headers": {
+    "host": "api.barnwellpizzandgrill.co.uk",
+    "x-real-ip": "138.68.179.24",
+    "x-forwarded-for": "138.68.179.24",
+    "connection": "close",
+    "user-agent": "curl/8.12.1",
+    "accept": "*/*"
+  }
+}

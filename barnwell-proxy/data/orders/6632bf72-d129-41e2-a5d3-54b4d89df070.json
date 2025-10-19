@@ -1,0 +1,60 @@
+{
+  "order_ref": "6632bf72-d129-41e2-a5d3-54b4d89df070",
+  "created_at": "2025-10-05T22:48:10.626Z",
+  "payload": {
+    "items": [
+      {
+        "name": "9\" Cheese & Tomato Ⓥ  APP TEST ITEM",
+        "quantity": 1,
+        "unit_pence": 100,
+        "groups": [
+          {
+            "name": "Size",
+            "values": [
+              "Regular £1.00"
+            ]
+          },
+          {
+            "name": "Crust",
+            "values": [
+              "Deep Pan"
+            ]
+          },
+          {
+            "name": "Pizza Base",
+            "values": [
+              "Garlic Butter"
+            ]
+          },
+          {
+            "name": "Add Stuffed Crust",
+            "values": [
+              "No"
+            ]
+          }
+        ]
+      }
+    ],
+    "delivery_fee_pence": 10,
+    "currency": "GBP",
+    "title": "Barnwell Grill Order",
+    "meta": {
+      "fulfilment": "delivery",
+      "scheduled_at": "2025-10-06T10:00:00.000Z",
+      "address": "Oundle, Corby and East Northamptonshire, PE8 4QU, East Midlands, England",
+      "customer": {
+        "name": "Richard Dowman",
+        "phone": "+447789770210",
+        "email": "r.dowman@eazi-apps.co.uk"
+      }
+    }
+  },
+  "printable_receipt": "                             ORDER\nORDER TYPE = DELIVERY\nORDER DATE = 6th Oct @ 10:00\n\nName: Richard Dowman\nPhone: +447789770210\nAddress: Oundle, Corby and East Northamptonshire, PE8 4QU, East Midlands, England\n\n---------------------------------------------------------------\n9\" Cheese & Tomato Ⓥ  APP TEST ITEM                       £1.00\nSize: Regular £1.00\nCrust: Deep Pan\nPizza Base: Garlic Butter\nAdd Stuffed Crust: No\n---------------------------------------------------------------\nSUBTOTAL:                                                 £1.00\nDELIVERY FEE:                                             £0.10\nTOTAL:                                                    £1.10\n",
+  "total_pence": 110,
+  "sentToPrinter": true,
+  "payment": {
+    "method": "cash",
+    "status": "UNPAID"
+  },
+  "contactKey": "fe3800d6f30220e15d133bf43de0ad2e4e0b86b2add7f2b12c09fffbea178a75"
+}
