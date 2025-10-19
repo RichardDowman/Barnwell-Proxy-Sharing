@@ -178,6 +178,25 @@ app.post('/api/admin/print-test',(req,res)=>{setCors(req,res);if(!checkAdmin(req
 /* Admin: force print an order by ref (fallback) */
 app.post('/api/admin/print-order',(req,res)=>{setCors(req,res);if(!checkAdmin(req,res))return;const ref=String(req.body?.ref||'').trim();if(!ref)return res.status(400).json({ok:false,error:'missing_ref'});const f=path.join(ORDERS_DIR,ref+'.json');if(!fs.existsSync(f))return res.status(404).json({ok:false,error:'not_found'});const order=readJSON(f,null);const txt=(order?.printable_receipt)||'ORDER\n(no receipt text)\n';enqueueTicket(txt,{order_ref:ref,source:'admin-force-print'});order.sentToPrinter=true;writeJSON(f,order);res.json({ok:true,enqueued:true});});
 
+/* Debug endpoint: printing status and diagnostics */
+app.get('/api/debug/print-status',(req,res)=>{setCors(req,res);if(!checkAdmin(req,res))return;try{
+  const queueJobs=listTxt(QUEUE_DIR);
+  const doneJobs=listTxt(DONE_DIR).slice(-10);
+  const lastCallback=fs.existsSync(path.join(PRINTER_DIR,'last-callback.json'))?readJSON(path.join(PRINTER_DIR,'last-callback.json'),null):null;
+  const queueList=queueJobs.map(j=>({file:j.f,path:j.p,modified:new Date(j.m).toISOString(),preview:fs.readFileSync(j.p,'utf8').slice(0,200)}));
+  const doneList=doneJobs.map(j=>({file:j.f,modified:new Date(j.m).toISOString()}));
+  res.json({ok:true,queue:{count:queueJobs.length,jobs:queueList},done:{count:doneJobs.length,recentJobs:doneList},lastCallback,printerToken:PRINTER_TOKEN?'***set***':'not_set',timestamp:nowISO()});
+}catch(e){res.status(500).json({ok:false,error:String(e&&e.message||e)});}});
+
+/* Debug endpoint: test print with sample data */
+app.post('/api/debug/print-test',(req,res)=>{setCors(req,res);if(!checkAdmin(req,res))return;try{
+  const sampleOrder={items:[{name:'Test Burger',quantity:1,unit_pence:950,groups:[{name:'TOPPINGS',values:['Lettuce','Tomato','Cheese']}]},{name:'Chips',quantity:2,unit_pence:250}],delivery_fee_pence:200,meta:{fulfilment:'delivery',customer:{name:'Test Customer',phone:'+447700900000'},address:'123 Test Street, Test Town, TE1 2ST',scheduled_at:null}};
+  const customOrder=req.body&&Object.keys(req.body).length>0?req.body:sampleOrder;
+  const receipt=buildReceipt(customOrder);
+  const id=enqueueTicket(receipt,{source:'debug-test',timestamp:nowISO()});
+  res.json({ok:true,jobId:id,receipt,payload:customOrder,message:'Test print job enqueued successfully'});
+}catch(e){res.status(500).json({ok:false,error:String(e&&e.message||e)});}});
+
 /* Order history */
 app.get('/api/user-orders',async (req,res)=>{try{setCors(req,res);const phone=String(req.query.phone||'').trim();const email=String(req.query.email||'').trim();const limit=Math.min(50,Math.max(1,parseInt(String(req.query.limit||'10'),10)||10));const ck=contactKeyFrom(phone,email);if(!ck)return res.status(400).json({error:'missing_contact'});if(db){const snap=await db.collection('orders').where('contactKey','==',ck).orderBy('created_at','desc').limit(limit).get();const orders=[];snap.forEach(doc=>{const d=doc.data();orders.push({order_ref:d.order_ref,created_at:d.created_at,total_pence:d.total_pence,items:d.items,delivery_fee_pence:d.delivery_fee_pence,meta:d.meta,payment:d.payment||{}});});return res.json({ok:true,orders});}
 const files=fs.readdirSync(ORDERS_DIR).filter(f=>f.endsWith('.json'));const rows=[];for(const f of files){const o=readJSON(path.join(ORDERS_DIR,f),null);if(!o)continue;if(o.contactKey&&o.contactKey===ck){rows.push({order_ref:o.order_ref,created_at:o.created_at,total_pence:o.total_pence,items:(o.payload?.items)||[],delivery_fee_pence:o.payload?.delivery_fee_pence||o.delivery_fee_pence||0,meta:o.payload?.meta||o.meta||{},payment:o.payment||{}});}}rows.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));res.json({ok:true,orders:rows.slice(0,limit)});}catch(e){res.status(500).json({ok:false,error:String(e&&e.message||e)});}});

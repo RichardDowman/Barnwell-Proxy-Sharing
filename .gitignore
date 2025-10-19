@@ -9,3 +9,5 @@ build/
 .env
 .env.local
 /.cache
+barnwell-proxy/data/printer/queue/*.txt
+barnwell-proxy/data/printer/queue/*.json
