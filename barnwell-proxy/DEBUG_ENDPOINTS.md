@@ -191,3 +191,7 @@ curl -H "X-Admin-Token: TOKEN" http://localhost:8080/api/debug/print-status | jq
 - The status endpoint shows the last 10 completed jobs
 - Job previews are limited to the first 200 characters
 - The receipt format uses 63-character width for Star printers
+
+## Additional Resources
+
+For detailed testing examples and integration code, see [TESTING_EXAMPLES.md](./TESTING_EXAMPLES.md).
