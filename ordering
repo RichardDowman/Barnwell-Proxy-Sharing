@@ -1,0 +1,1514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Barnwell Grill – Order Online</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<style>
+:root{
+  --primary:#2563eb; --primary-600:#1d4ed8; --brand-blue:#225CE4;
+  --bg:#f8fafc; --surface:#ffffff; --muted:#6b7280; --text:#0b1220; --border:#e6eefc;
+  --danger:#ef4444; --radius:10px; --shadow-1:0 6px 18px rgba(15,23,42,0.06);
+  --shadow-2:0 10px 30px rgba(15,23,42,0.08); --max-content-width:1080px;
+}
+html,body{height:100%;max-width:100vw;overflow-x:hidden}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial;background:var(--bg);color:var(--text);line-height:1.45}
+body.modal-open{overflow:hidden}
+
+/* Header */
+.header{position:sticky;top:0;z-index:120;background:linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.98));border-bottom:1px solid rgba(15,23,42,0.04);display:flex;gap:12px;align-items:center;padding:12px 16px;backdrop-filter: blur(4px)}
+.brand-title{font-weight:800;font-size:18px;color:var(--primary-600)}
+.header-actions{margin-left:auto;display:flex;gap:10px;align-items:center}
+
+/* Right-side buttons */
+.icon-btn{width:44px;height:36px;border-radius:12px;border:0;cursor:pointer;background:linear-gradient(180deg,var(--primary),var(--primary-600));display:inline-flex;align-items:center;justify-content:center;box-shadow:var(--shadow-1);padding:0}
+.icon-order{width:20px;height:20px;display:block;-webkit-mask:url('https://barnwellgrill.gbapps.cmslogin.io/docs/order.svg') no-repeat center/contain;mask:url('https://barnwellgrill.gbapps.cmslogin.io/docs/order.svg') no-repeat center/contain;background:#fff}
+.cart-btn{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:10px;background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;border:0;font-weight:800;cursor:pointer}
+.cart-count{background:#fff;color:var(--primary-600);padding:4px 8px;border-radius:999px;font-weight:900;font-size:12px}
+.cart-icon{width:16px;height:16px;display:inline-block;vertical-align:middle;-webkit-mask:url('https://barnwellgrill.gbapps.cmslogin.io/docs/shopping-cart.svg') no-repeat center/contain;mask:url('https://barnwellgrill.gbapps.cmslogin.io/docs/shopping-cart.svg') no-repeat center/contain;background:#fff}
+
+/* Category */
+.category-bar-wrap{position:sticky;top:56px;z-index:105;background:var(--bg);padding:10px}
+.category-nav{display:flex;gap:8px;overflow-x:auto;padding:6px 4px;align-items:center;white-space:nowrap}
+.category-pill{background:var(--surface);border:1px solid var(--border);color:var(--muted);padding:8px 14px;border-radius:999px;font-weight:700;white-space:nowrap;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:auto;max-width:calc(100vw - 80px);overflow:hidden;text-overflow:ellipsis}
+.category-pill.selected{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+/* Items */
+.items-container{padding:12px;display:flex;flex-direction:column;gap:12px;max-width:var(--max-content-width);margin:0 auto}
+.item-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-1)}
+.item-header{display:flex;gap:12px;padding:12px;cursor:pointer;align-items:flex-start}
+.item-title{margin:0;font-weight:900;font-size:15px}
+.item-price{font-weight:900;color:var(--primary-600)}
+.item-desc{color:var(--muted);font-size:13px;margin-top:8px}
+
+/* details */
+.item-details{max-height:0;overflow:hidden;border-top:1px dashed rgba(15,23,42,0.03);transition:max-height .28s ease}
+.item-details-inner{padding:12px;display:flex;flex-direction:column;gap:12px}
+
+/* options */
+.option-group{margin-bottom:8px}
+.option-label{font-weight:800;margin-bottom:8px;color:var(--text)}
+.option-hint{font-size:12px;color:var(--muted);margin-top:6px}
+.badge-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.option-badge{background:#f1f5f9;padding:7px 10px;border-radius:10px;border:1px solid rgba(15,23,42,0.04);cursor:pointer;font-weight:800;min-height:36px;white-space:nowrap}
+.option-badge:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(2,6,23,0.03)}
+.option-badge.selected{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;border-color:transparent;box-shadow:0 10px 30px rgba(47,108,241,0.12)}
+.option-badge.locked{opacity:.45;pointer-events:none}
+
+/* add to cart */
+.add-to-cart-btn{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;border:0;padding:10px;border-radius:10px;font-weight:900;cursor:pointer;width:100%;box-shadow:var(--shadow-2)}
+.add-to-cart-btn[disabled]{opacity:.6;cursor:not-allowed;box-shadow:none}
+
+/* cart drawer */
+.cart-drawer{position:fixed;top:0;right:-460px;width:420px;max-width:100%;height:100vh;background:var(--surface);box-shadow:-12px 0 40px rgba(2,6,23,0.12);transition:right .22s ease;z-index:1400;border-left:1px solid rgba(15,23,42,0.04);display:flex;flex-direction:column;padding-left:12px;padding-right:12px}
+.cart-drawer.open{right:0}
+.cart-header{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid rgba(15,23,42,0.06)}
+.cart-back{background:transparent;border:0;padding:6px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center}
+.back-svg{width:18px;height:18px;display:inline-block;-webkit-mask:url('https://barnwellgrill.gbapps.cmslogin.io/docs/back-button.svg') no-repeat center/contain;mask:url('https://barnwellgrill.gbapps.cmslogin.io/docs/back-button.svg') no-repeat center/contain;background:var(--brand-blue);border-radius:4px}
+
+/* cart footer/button */
+.cart-footer{padding:16px;border-top:1px solid rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:10px;background:var(--bg)}
+.checkout-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 14px;border-radius:10px;border:0;background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;font-weight:900;cursor:pointer;box-shadow:var(--shadow-2)}
+.checkout-btn[disabled]{opacity:0.65;cursor:not-allowed;box-shadow:none}
+
+/* cart rows */
+.cart-item{display:flex;justify-content:space-between;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--border)}
+.cart-item-info{min-width:0;display:flex;flex-direction:column;gap:6px}
+.cart-item-name{font-weight:900}
+.cart-item-options{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:2px}
+.cart-controls{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.qty-wrap{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);padding:4px 8px;border-radius:999px;background:#fff}
+.qty-btn{background:#fff;border:1px solid rgba(0,0,0,0.06);padding:6px 8px;border-radius:6px;cursor:pointer;font-weight:800}
+.qty-val{min-width:28px;text-align:center;font-weight:800}
+.cart-line-total{font-weight:900;color:var(--primary-600)}
+.remove-item{background:#fff;border:1px solid #f3d1d1;color:#b91c1c;padding:6px 8px;border-radius:8px;cursor:pointer}
+
+/* checkout overlay */
+.checkout-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:1600;background:rgba(5,6,7,0.45)}
+.checkout-overlay.visible{display:flex}
+.checkout-card{width:min(1100px,96vw);max-height:92vh;border-radius:14px;background:var(--surface);display:grid;grid-template-columns:1fr 360px;gap:24px;padding:20px;overflow:auto;box-shadow:var(--shadow-2);border:1px solid rgba(15,23,42,0.03)}
+@media(max-width:980px){.checkout-card{grid-template-columns:1fr;max-height:100vh;border-radius:0;height:100vh}}
+
+/* checkout top bar with back */
+.checkout-top{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.checkout-top .title{font-weight:900}
+
+/* checkout left */
+.checkout-left{padding-right:6px;display:flex;flex-direction:column;gap:18px}
+.section{background:linear-gradient(180deg,#fff,#fbfdff);border:1px solid rgba(15,23,42,0.04);border-radius:12px;padding:12px}
+.section-title{font-weight:900;margin:0 0 8px}
+.form-title{font-weight:900;margin:0 0 6px}
+.input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);background:#fbfdff;font-size:16px}
+.field-label{display:block;font-weight:700;margin-bottom:6px;font-size:13px}
+.field.required .field-label::after{content:' *';color:var(--danger);margin-left:4px;font-weight:900}
+
+/* fulfilment toggles */
+.fulfillment-btns{display:flex;gap:8px}
+.ful-btn{padding:10px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.06);background:#fff;cursor:pointer;font-weight:800;color:var(--muted)}
+.ful-btn.active{background:var(--primary);color:#fff;border-color:transparent;box-shadow:0 10px 30px rgba(47,108,241,0.12)}
+
+/* payment method */
+.pay-btns{display:flex;gap:8px;margin-top:8px}
+.pay-btn{padding:10px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.06);background:#fff;cursor:pointer;font-weight:800;color:var(--muted)}
+.pay-btn.active{background:var(--primary);color:#fff;border-color:transparent;box-shadow:0 10px 30px rgba(47,108,241,0.12)}
+
+/* saved address actions */
+.saved-address-actions{display:flex;gap:8px;flex-direction:column}
+.saved-btn{padding:6px 8px;border-radius:8px;font-weight:800;cursor:pointer;border:1px solid rgba(15,23,42,0.06);background:#fff;color:var(--text);min-width:72px;text-align:center}
+.saved-btn.use{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;border-color:transparent;box-shadow:var(--shadow-2)}
+.saved-btn.default{background:#fff;color:var(--primary);border:1px solid rgba(47,108,241,0.12)}
+.saved-btn.remove{background:#fff6f6;color:#b91c1c;border:1px solid #f5c2c2}
+@media(min-width:720px){ .saved-address-actions{flex-direction:row} }
+
+/* summary and place order */
+.checkout-right{padding-left:10px;position:relative;min-width:280px}
+.summary-row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:6px 0;color:var(--muted)}
+.summary-row.total{font-weight:900;font-size:1.05rem;color:var(--text);margin-top:6px}
+.place-order{margin-top:12px;display:block;width:100%;border-radius:10px;padding:12px;border:0;cursor:pointer;background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;font-weight:900;box-shadow:var(--shadow-2)}
+.place-order[disabled]{opacity:0.6;cursor:not-allowed}
+
+/* closed banner */
+.closed-banner{display:none;margin:10px 12px;padding:10px;border-radius:10px;border:1px dashed #f1c9c9;background:#fff7f7;color:#7f1d1d;font-weight:800}
+.closed-banner.show{display:block}
+
+/* misc */
+.helper{font-size:13px;color:var(--muted);margin-top:6px}
+.note{font-size:12px;color:#9aa4b2;margin-top:6px}
+*::-webkit-scrollbar{height:10px;width:10px}
+*::-webkit-scrollbar-thumb{background:rgba(15,23,42,0.08);border-radius:10px}
+
+/* softer loading text */
+.loading-plain{padding:36px 12px;text-align:center;color:#9aa4b2;font-weight:600}
+</style>
+</head>
+<body>
+<header class="header" role="banner">
+  <div>
+    <div class="brand-title">Barnwell Grill</div>
+    <div class="note" style="font-size:12px;margin-top:2px;">Order online — fast & fresh</div>
+  </div>
+
+  <div class="header-actions" role="navigation" aria-label="Header actions">
+    <button id="ordersBtn" class="icon-btn" aria-label="Order history" title="Order history">
+      <span class="icon-order" aria-hidden="true"></span>
+    </button>
+    <button id="cartBtn" class="cart-btn" aria-label="Open cart">
+      <span class="cart-icon" aria-hidden="true"></span>
+      Cart <span id="cartCount" class="cart-count">0</span>
+    </button>
+  </div>
+</header>
+
+<div id="closedBanner" class="closed-banner" aria-live="polite"></div>
+
+<nav class="category-bar-wrap" aria-label="Categories">
+  <div id="categoryNav" class="category-nav" role="tablist"></div>
+</nav>
+
+<main class="items-container" id="itemsMount" aria-live="polite">
+  <div class="loading-plain">Loading menu…</div>
+</main>
+
+<div id="overlay" class="overlay" aria-hidden="true"></div>
+
+<aside id="cartDrawer" class="cart-drawer" aria-hidden="true" role="dialog" aria-label="Cart">
+  <div class="cart-header">
+    <button id="cartBack" class="cart-back" aria-label="Back from cart">
+      <span class="back-svg" aria-hidden="true"></span>
+    </button>
+    <div style="font-weight:900">Your order</div>
+  </div>
+  <div id="cartItems" class="cart-items">
+    <div style="padding:12px;color:var(--muted)">Your cart is empty</div>
+  </div>
+  <div class="cart-footer">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-weight:800">Total</div>
+      <div id="cartTotal" style="font-weight:900">£0.00</div>
+    </div>
+    <button id="checkoutBtn" class="checkout-btn" disabled>Proceed to checkout</button>
+  </div>
+</aside>
+
+<div id="checkoutOverlay" class="checkout-overlay" aria-hidden="true">
+  <div class="checkout-card" role="dialog" aria-modal="true" aria-label="Checkout">
+    <div class="checkout-left">
+
+      <div class="checkout-top">
+        <button id="checkoutBackTop" class="cart-back" aria-label="Back from checkout">
+          <span class="back-svg" aria-hidden="true"></span>
+        </button>
+        <div class="title">Checkout</div>
+      </div>
+
+      <section class="section">
+        <h3 class="section-title">Delivery or collection</h3>
+        <div class="fulfillment-btns">
+          <button id="fulDeliveryBtn" class="ful-btn active" aria-pressed="true">Delivery</button>
+          <button id="fulCollectionBtn" class="ful-btn" aria-pressed="false">Collection</button>
+        </div>
+        <div style="margin-top:12px">
+          <label for="timeSelect" class="note" style="display:block;margin-bottom:6px">When</label>
+          <select id="timeSelect" class="input" aria-label="Choose time"></select>
+          <div class="helper">Choose delivery or collection and pick a time.</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h3 class="section-title">Your details</h3>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="field required" id="fieldName">
+            <label class="field-label" for="custName">Full name</label>
+            <input id="custName" class="input" placeholder="Full name" aria-label="Full name" />
+          </div>
+          <div class="field required" id="fieldPhone">
+            <label class="field-label" for="custPhone">Phone</label>
+            <input id="custPhone" class="input" placeholder="Phone" aria-label="Phone" />
+          </div>
+          <div class="field" id="fieldEmail">
+            <label class="field-label" for="custEmail">Email (optional)</label>
+            <input id="custEmail" class="input" placeholder="Email (optional)" aria-label="Email" />
+          </div>
+        </div>
+      </section>
+
+      <section id="addressArea" class="section">
+        <h3 class="section-title">Address</h3>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="field"><label class="field-label">Address line 1</label><input id="mLine1" class="input" placeholder="Address line 1 (house number and street)" aria-label="Address line 1"></div>
+          <div class="field"><label class="field-label">Address line 2</label><input id="mLine2" class="input" placeholder="Address line 2 (optional)" aria-label="Address line 2"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div class="field"><label class="field-label">Town / City</label><input id="mCity" class="input" placeholder="Town / City" aria-label="Town or city" /></div>
+            <div class="field"><label class="field-label">Postcode</label><input id="mPostcode" class="input" placeholder="Postcode (e.g. PE8 4QU)" aria-label="Postcode" /></div>
+          </div>
+
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="saveAddrLabel" class="input" placeholder="Label this address (e.g. Home / Work)" aria-label="Address label" />
+            <button id="saveAddrBtn" class="saved-btn use" style="padding:8px 12px;border-radius:8px;color:#fff">Save this address</button>
+          </div>
+          <div class="helper">You must save the address before you can place the order when Delivery is selected.</div>
+
+          <div id="savedAddressesContainer" style="margin-top:12px"></div>
+        </div>
+      </section>
+
+      <!-- Payment method -->
+      <section id="paymentArea" class="section">
+        <h3 class="section-title">Payment method</h3>
+        <div class="pay-btns">
+          <button id="payCardBtn" class="pay-btn active" aria-pressed="true">Card</button>
+          <button id="payCashBtn" class="pay-btn" aria-pressed="false">Cash</button>
+        </div>
+      </section>
+    </div>
+
+    <aside class="checkout-right">
+      <div style="font-weight:900;margin-bottom:8px">Order summary</div>
+      <div style="background:linear-gradient(180deg,#fff,#fbfdff);padding:12px;border-radius:10px;border:1px solid rgba(15,23,42,0.03)">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--muted)">Subtotal <span id="sumSubtotal">£0.00</span></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;color:var(--muted)">Delivery <span id="sumDelivery">£0.00</span></div>
+        <div class="summary-row total" style="display:flex;justify-content:space-between">Total <span id="sumTotal">£0.00</span></div>
+        <div style="margin-top:14px"><button id="placeOrderBtn" class="place-order" disabled>Place order</button></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- Orders modal -->
+<div id="ordersModal" class="checkout-overlay" aria-hidden="true">
+  <div class="checkout-card" role="dialog" aria-modal="true" aria-label="Your orders" style="max-width:900px;grid-template-columns:1fr">
+    <div class="checkout-left">
+      <div class="checkout-top">
+        <button id="ordersClose" class="cart-back" aria-label="Close orders"><span class="back-svg"></span></button>
+        <div class="title">Your past orders</div>
+      </div>
+      <div id="ordersList" class="section" style="max-height:70vh;overflow:auto"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<script>
+/* ---------- Base URL for proxy ---------- */
+(function(){
+  const fallback="https://api.barnwellpizzandgrill.co.uk";
+  try{
+    if(!localStorage.getItem('order_proxy_base')) localStorage.setItem('order_proxy_base', fallback);
+    window.PROXY_BASE = (localStorage.getItem('order_proxy_base') || fallback).replace(/\/+$/,'');
+  }catch(e){ window.PROXY_BASE=fallback; }
+})();
+
+/* Tiny notifier */
+(function(){ let last=0; window.__barnwell_notify = function(msg, ms=2200){
+  const now=Date.now(); if(now-last<900) return; last=now;
+  const el=document.createElement('div'); el.textContent=msg;
+  Object.assign(el.style,{position:'fixed',left:'50%',transform:'translateX(-50%)',bottom:'18px',background:'rgba(11,17,28,0.95)',color:'#fff',padding:'10px 14px',borderRadius:'10px',zIndex:9999,fontWeight:800});
+  document.body.appendChild(el); setTimeout(()=>el.remove(), ms); };})();
+
+/* Immediate redirect to Square for card payments */
+const OPEN_SQUARE_MODE = 'redirect'; // 'redirect' | 'modal'
+const DEBUG = false;
+
+function normalizeOptionName(s){
+  if(!s) return '';
+  let t = String(s).toLowerCase();
+  t = t.replace(/£\s*\d+(\.\d+)?/g,'').replace(/\b\d+(\.\d+)?p\b/g,'').replace(/\b\d+\/\d+\b/g,'');
+  t = t.replace(/\d+(\.\d+)?/g,'').replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
+  return t;
+}
+function _normVarName(n){ return String(n||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+function _dedupeVariations(arr){
+  if(!Array.isArray(arr)) return [];
+  const seen = new Set(); const out=[];
+  for(const v of arr){
+    const id = v?.id || '';
+    const nm = _normVarName(v?.item_variation_data?.name || v?.name);
+    const price = v?.item_variation_data?.price_money?.amount || v?.price_money?.amount || 0;
+    const key = id ? ('id:'+id) : ('np:'+nm+'|'+price);
+    if(seen.has(key)) continue;
+    seen.add(key); out.push(v);
+  }
+  return out;
+}
+const qs = (s, r=document)=>r.querySelector(s);
+
+/* ---------- Ordering ---------- */
+class BarnwellOrderingSystem {
+  constructor(){
+    this.REQUEST_TYPES = 'ITEM,ITEM_VARIATION,CATEGORY,MODIFIER_LIST,ITEM_OPTION';
+
+    this.categoriesById = {}; this.itemsById = {}; this.variationsByItemId = {};
+    this.modifierListsById = {}; this.itemOptionsById = {}; this.itemsByCategoryId = {};
+    this.cart = this._getLS('barnwell_cart') || []; this.cart.forEach(i=>{ if(typeof i.qty!=='number') i.qty=1; });
+    this.savedAddresses = this._getLS('saved_addresses') || [];
+    this.apiProxyBase = (window.PROXY_BASE||'').replace(/\/+$/,'');
+    this.selectedAddress = null; this.currentQuote = null; this.addressConfirmed = false; this.fulfilment='delivery'; this.selectedTime=null;
+    this.paymentMethod = 'card';
+
+    this.businessHours = { days: Array.from({length:7},()=>({open:"11:00",close:"22:00",closed:false})), leadTimeMinutes:30, allowPreorderDays:1, closed:false, reopenAt:null };
+    this.slotConfig = { collection:{ granularity_minutes:60, min_lead_minutes:30, min_order_pence:800 }, delivery:{ granularity_minutes:60, min_lead_minutes:45, min_order_pence:1200 } };
+
+    this.el = {
+      categoryNav: qs('#categoryNav'),
+      itemsMount: qs('#itemsMount'),
+      cartBtn: qs('#cartBtn'),
+      ordersBtn: qs('#ordersBtn'),
+      ordersModal: qs('#ordersModal'),
+      ordersClose: qs('#ordersClose'),
+      ordersList: qs('#ordersList'),
+      cartDrawer: qs('#cartDrawer'),
+      overlay: qs('#overlay'),
+      cartBack: qs('#cartBack'),
+      cartCount: qs('#cartCount'),
+      cartItems: qs('#cartItems'),
+      cartTotal: qs('#cartTotal'),
+      checkoutBtn: qs('#checkoutBtn'),
+      checkoutOverlay: qs('#checkoutOverlay'),
+      checkoutBackTop: qs('#checkoutBackTop'),
+      placeOrderBtn: qs('#placeOrderBtn'),
+      custName: qs('#custName'),
+      custPhone: qs('#custPhone'),
+      custEmail: qs('#custEmail'),
+      mLine1: qs('#mLine1'),
+      mLine2: qs('#mLine2'),
+      mCity: qs('#mCity'),
+      mPostcode: qs('#mPostcode'),
+      saveAddrLabel: qs('#saveAddrLabel'),
+      saveAddrBtn: qs('#saveAddrBtn'),
+      savedAddressesContainer: qs('#savedAddressesContainer'),
+      sumSubtotal: qs('#sumSubtotal'),
+      sumDelivery: qs('#sumDelivery'),
+      sumTotal: qs('#sumTotal'),
+      timeSelect: qs('#timeSelect'),
+      fulDeliveryBtn: qs('#fulDeliveryBtn'),
+      fulCollectionBtn: qs('#fulCollectionBtn'),
+      addressArea: qs('#addressArea'),
+      closedBanner: qs('#closedBanner'),
+      payCardBtn: qs('#payCardBtn'),
+      payCashBtn: qs('#payCashBtn')
+    };
+
+    this._bind();
+    this._renderCart();
+    this._loadCatalog();
+    this._loadSettings().then(()=>{ this._renderTimeOptions(); this._updateClosedBanner(); }).catch(()=>{ this._renderTimeOptions(); });
+
+    this._maybeShowReturnSummary();
+  }
+
+  _getLS(k){ try{return JSON.parse(localStorage.getItem(k));}catch(e){return null} }
+  _setLS(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
+  _formatPrice(a){ return a==null ? '' : '£'+(a/100).toFixed(2); }
+
+  async _fetchJSON(url, opts={}, timeout=20000){
+    const ctrl=new AbortController(); const id=setTimeout(()=>ctrl.abort(), timeout);
+    try{
+      let final=url;
+      if(!/^https?:\/\//i.test(url)){
+        if(!url.startsWith('/')) url='/'+url;
+        final = this.apiProxyBase ? (this.apiProxyBase+url) : url;
+      }
+      const headers = Object.assign({}, opts.headers||{});
+      if(opts.body && !headers['Content-Type']) headers['Content-Type']='application/json';
+      if(!headers['Accept']) headers['Accept']='application/json';
+      headers['ngrok-skip-browser-warning'] = '1';
+
+      const r = await fetch(final, {...opts, headers, signal: ctrl.signal, mode:'cors', redirect:'follow', cache:'no-store'});
+      clearTimeout(id);
+      if(!r.ok){ const txt=await r.text().catch(()=>r.statusText); throw new Error(`HTTP ${r.status} ${r.statusText} — ${txt}`); }
+      const txt = await r.text().catch(()=>null); if(!txt) return null; try{return JSON.parse(txt);}catch(e){return txt;}
+    }catch(e){ clearTimeout(id); throw e; }
+  }
+
+  _bind(){
+    this.el.cartBtn?.addEventListener('click', ()=> this._toggleCart(true));
+    this.el.cartBack?.addEventListener('click', ()=> this._toggleCart(false));
+    this.el.overlay?.addEventListener('click', ()=> this._toggleCart(false));
+    this.el.checkoutBtn?.addEventListener('click', ()=> this._checkout());
+    this.el.checkoutBackTop?.addEventListener('click', ()=> { this._closeCheckout(); this._toggleCart(true); });
+
+    this.el.ordersBtn?.addEventListener('click', ()=> this._openOrdersModal());
+    this.el.ordersClose?.addEventListener('click', ()=> this._closeOrdersModal());
+
+    this.el.saveAddrBtn?.addEventListener('click', ()=> this._saveCurrentAddressLocally());
+    this.el.placeOrderBtn?.addEventListener('click', ()=> this._placeOrder());
+
+    this.el.custName?.addEventListener('input', ()=> this._recomputeTotals());
+    this.el.custPhone?.addEventListener('input', ()=> this._recomputeTotals());
+    this.el.custEmail?.addEventListener('input', ()=> this._recomputeTotals());
+    this.el.timeSelect?.addEventListener('change', ()=> { this.selectedTime = this.el.timeSelect.value; this._recomputeTotals(); });
+
+    // Payment method UI
+    this.el.payCardBtn?.addEventListener('click', ()=>{
+      this.paymentMethod='card';
+      this.el.payCardBtn.classList.add('active'); this.el.payCardBtn.setAttribute('aria-pressed','true');
+      this.el.payCashBtn.classList.remove('active'); this.el.payCashBtn.setAttribute('aria-pressed','false');
+    });
+    this.el.payCashBtn?.addEventListener('click', ()=>{
+      this.paymentMethod='cash';
+      this.el.payCashBtn.classList.add('active'); this.el.payCashBtn.setAttribute('aria-pressed','true');
+      this.el.payCardBtn.classList.remove('active'); this.el.payCardBtn.setAttribute('aria-pressed','false');
+    });
+
+    document.addEventListener('click', (e)=>{
+      const b = e.target.closest('.option-badge'); if(!b) return;
+      const card = b.closest('.item-card'); if(card){ e.stopPropagation(); this._handleBadgeToggle(card, b); }
+    });
+
+    this.el.fulDeliveryBtn?.addEventListener('click', ()=> { this._setFulfilment('delivery'); });
+    this.el.fulCollectionBtn?.addEventListener('click', ()=> { this._setFulfilment('collection'); });
+
+    this.el.mPostcode?.addEventListener('blur', async ()=>{
+      const pc = (this.el.mPostcode.value||'').trim(); if(!pc) return;
+      try{
+        const res = await this._fetchJSON('/api/geocode?postcode=' + encodeURIComponent(pc)).catch(()=>null);
+        if(res && Array.isArray(res.results) && res.results.length){
+          const r = res.results[0];
+          const loc = r.geometry?.location || {};
+          const lat = (typeof loc.lat === 'function') ? loc.lat() : loc.lat;
+          const lng = (typeof loc.lng === 'function') ? loc.lng() : loc.lng;
+          const formatted = r.formatted_address || pc;
+          const fields = { line1:this.el.mLine1.value.trim(), line2:this.el.mLine2.value.trim(), city:this.el.mCity.value.trim(), postcode: pc };
+          // If user has line1, don't overwrite their address string; keep geocoded separately
+          const hasLine1 = !!fields.line1;
+          const composed = this._composeAddressString(fields);
+          this.selectedAddress = { 
+            label: fields.line1 || formatted, 
+            address: hasLine1 ? composed : formatted, 
+            fields, 
+            lat, lng, 
+            geocodedAddress: formatted 
+          };
+          await this._quoteForSelected();
+          this._renderSavedAddressesUI();
+        } else {
+          const fields = { line1:this.el.mLine1.value.trim(), line2:this.el.mLine2.value.trim(), city:this.el.mCity.value.trim(), postcode: pc };
+          const composed = this._composeAddressString(fields);
+          this.selectedAddress = { label: fields.line1 || pc, address: composed || pc, fields, lat:null, lng:null, geocodedAddress:null };
+          await this._quoteForSelected();
+          this._renderSavedAddressesUI();
+        }
+      }catch(e){ if (DEBUG) console.warn('postcode blur geocode failed', e); __barnwell_notify('Address lookup failed'); }
+    });
+
+    if(window.gb && gb.user && gb.user.getUser){
+      gb.user.getUser().then(u=>{
+        if(u){
+          if(this.el.custName && !this.el.custName.value) this.el.custName.value = (u.firstname && u.lastname) ? (u.firstname+' '+u.lastname) : (u.displayName||'');
+          if(this.el.custEmail && !this.el.custEmail.value) this.el.custEmail.value = u.email || '';
+          if(this.el.custPhone && !this.el.custPhone.value) this.el.custPhone.value = u.phone || '';
+        }
+      }).catch(()=>{});
+    }
+  }
+
+  _toggleCart(open){
+    try{
+      const d=this.el.cartDrawer, o=this.el.overlay;
+      if(open===true){ d.classList.add('open'); o.classList.add('show'); d.setAttribute('aria-hidden','false'); }
+      else if(open===false){ d.classList.remove('open'); o.classList.remove('show'); d.setAttribute('aria-hidden','true'); }
+      else { const isOpen=d.classList.contains('open'); this._toggleCart(!isOpen); }
+    }catch(e){ if (DEBUG) console.error('_toggleCart', e); }
+  }
+  _checkout(){ if(!this.cart.length) return; this._toggleCart(false); this._renderCheckout(); this.el.checkoutOverlay.classList.add('visible'); document.body.classList.add('modal-open'); }
+  _closeCheckout(){ this.el.checkoutOverlay.classList.remove('visible'); document.body.classList.remove('modal-open'); }
+  _renderCheckout(){ this._renderSavedAddressesUI(); this._renderTimeOptions(); this._recomputeTotals(); }
+
+  _renderCart(){
+    try{
+      if(this.el.cartCount) this.el.cartCount.textContent = this.cart.length;
+      if(!this.cart.length){
+        if(this.el.cartItems) this.el.cartItems.innerHTML = '<div style="padding:12px;color:var(--muted)">Your cart is empty</div>';
+        if(this.el.cartTotal) this.el.cartTotal.textContent = '£0.00';
+        if(this.el.checkoutBtn) this.el.checkoutBtn.disabled = true;
+        return;
+      }
+
+      const html = this.cart.map((c,i)=>{
+        const lines = (c.groups||[]).filter(g => Array.isArray(g.values) && g.values.length>0 && !/^size$/i.test(g.name||''))
+          .map(g => `<div><span class="lbl">${(g.name||'Options')}:</span> ${g.values.join(', ')}</div>`).join('');
+
+        return `
+        <div class="cart-item">
+          <div class="cart-item-info">
+            <div class="cart-item-name">${c.displayName || c.name}</div>
+            <div class="cart-item-options">${lines || ''}</div>
+          </div>
+          <div class="cart-controls">
+            <div class="qty-wrap">
+              <button class="qty-btn qty-minus" data-index="${i}">−</button>
+              <div class="qty-val">${c.qty||1}</div>
+              <button class="qty-btn qty-plus" data-index="${i}">+</button>
+            </div>
+            <div class="cart-line-total">${this._formatPrice(c.price * (c.qty||1))}</div>
+            <button class="remove-item" data-index="${i}">✕</button>
+          </div>
+        </div>`;
+      }).join('');
+
+      this.el.cartItems.innerHTML = html;
+      const total = this.cart.reduce((s,i)=>s + i.price * (i.qty||1),0);
+      if(this.el.cartTotal) this.el.cartTotal.textContent = this._formatPrice(total);
+      if(this.el.checkoutBtn) this.el.checkoutBtn.disabled = false;
+
+      this.el.cartItems.querySelectorAll('.qty-minus').forEach(btn=>btn.addEventListener('click', ()=>{
+        const idx = Number(btn.dataset.index); const it = this.cart[idx]; if(!it) return;
+        it.qty = Math.max(0,(it.qty||1)-1);
+        if(it.qty===0) this.cart.splice(idx,1);
+        this._setLS('barnwell_cart', this.cart);
+        this._renderCart();
+      }));
+      this.el.cartItems.querySelectorAll('.qty-plus').forEach(btn=>btn.addEventListener('click', ()=>{
+        const idx = Number(btn.dataset.index); const it = this.cart[idx]; if(!it) return;
+        it.qty = (it.qty||1)+1;
+        this._setLS('barnwell_cart', this.cart);
+        this._renderCart();
+      }));
+      this.el.cartItems.querySelectorAll('.remove-item').forEach(btn=>btn.addEventListener('click', ()=>{
+        const idx = Number(btn.dataset.index); const item = this.cart[idx]; if(!item) return;
+        if(!confirm(`Remove "${item.displayName || item.name}"?`)) return;
+        this.cart.splice(idx,1);
+        this._setLS('barnwell_cart', this.cart);
+        this._renderCart();
+      }));
+    }catch(e){ if (DEBUG) console.error('renderCart', e); }
+  }
+
+  _hm(str){ const [h,m]=String(str||'00:00').split(':').map(n=>parseInt(n,10)||0); return {h,m}; }
+  _dateWithHM(baseDate, hm){ return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), hm.h, hm.m, 0, 0); }
+
+  _updateClosedBanner(){
+    const b = this.el.closedBanner; if(!b) return;
+    const closed = !!this.businessHours.closed;
+    const reopenAt = this.businessHours.reopenAt ? new Date(this.businessHours.reopenAt) : null;
+    if(closed){
+      b.classList.add('show');
+      b.textContent = reopenAt && !isNaN(reopenAt) 
+        ? `The store is currently closed. Re-opens ${reopenAt.toLocaleString()}.`
+        : 'The store is currently closed.';
+    } else {
+      b.classList.remove('show');
+      b.textContent = '';
+    }
+  }
+
+  _renderTimeOptions(){
+    const sel = this.el.timeSelect; if(!sel) return;
+    sel.innerHTML='';
+    const now = new Date();
+
+    if(this.businessHours.closed === true){
+      const opt=document.createElement('option'); opt.text='Store closed'; opt.value=''; sel.appendChild(opt);
+      sel.disabled = true; this.selectedTime = null; return;
+    } else sel.disabled = false;
+
+    const mode = this.fulfilment==='collection' ? 'collection' : 'delivery';
+    const gran = Math.max(5, parseInt(this.slotConfig?.[mode]?.granularity_minutes ?? 60, 10));
+    const minLead = Math.max(0, parseInt(this.slotConfig?.[mode]?.min_lead_minutes ?? this.businessHours.leadTimeMinutes ?? 30, 10));
+    const daysAhead = Math.max(0, parseInt(this.businessHours.allowPreorderDays ?? 1, 10));
+
+    const options=[];
+    for(let d=0; d<=daysAhead; d++){
+      const dayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()+d);
+      const dow = dayDate.getDay();
+      const cfg = this.businessHours.days?.[dow] || {open:'11:00',close:'22:00',closed:false};
+      if(cfg.closed) continue;
+      const openHM = this._hm(cfg.open||'11:00'), closeHM = this._hm(cfg.close||'22:00');
+      let start = this._dateWithHM(dayDate, openHM);
+      const close = this._dateWithHM(dayDate, closeHM);
+
+      if(d===0){
+        const minStart = new Date(now.getTime() + minLead*60000);
+        const mins = minStart.getMinutes();
+        const add = (gran - (mins % gran)) % gran;
+        start = new Date(minStart.getFullYear(), minStart.getMonth(), minStart.getDate(), minStart.getHours(), minStart.getMinutes() + add, 0, 0);
+        if(start < this._dateWithHM(dayDate, openHM)) start = this._dateWithHM(dayDate, openHM);
+      }
+
+      for(let t=new Date(start); t<=close; t=new Date(t.getTime()+gran*60000)){
+        if(t.getTime() >= close.getTime()) break;
+        const labelDay = d===0 ? 'Today' : (d===1 ? 'Tomorrow' : dayDate.toLocaleDateString());
+        const hh = t.toTimeString().slice(0,5);
+        const value = t.toISOString();
+        options.push({text:`${labelDay} ${hh}`, value});
+      }
+    }
+
+    if(options.length===0){
+      const opt=document.createElement('option'); opt.text='No slots available'; opt.value='';
+      sel.appendChild(opt); sel.disabled = true; this.selectedTime = null; return;
+    }
+    options.forEach((o,i)=>{ const opt=document.createElement('option'); opt.value=o.value; opt.text = i===0 ? `ASAP ${o.text.replace(/^Today\s*/,'')}` : o.text; sel.appendChild(opt); });
+    sel.selectedIndex=0; this.selectedTime = sel.value;
+  }
+
+  _applyFulfilmentUI(){
+    try{
+      if(this.fulfilment==='collection'){
+        if(this.el.addressArea) this.el.addressArea.style.display = 'none';
+        this.el.fulCollectionBtn?.classList.add('active'); this.el.fulDeliveryBtn?.classList.remove('active');
+      } else {
+        if(this.el.addressArea) this.el.addressArea.style.display = '';
+        this.el.fulDeliveryBtn?.classList.add('active'); this.el.fulCollectionBtn?.classList.remove('active');
+      }
+    }catch(e){}
+    this._renderTimeOptions(); this._recomputeTotals();
+  }
+  _setFulfilment(mode){ this.fulfilment = (mode==='collection') ? 'collection' : 'delivery'; this._applyFulfilmentUI(); }
+
+  /* ---------- catalog ---------- */
+  async _loadCatalog(){
+    const typesQ = `?types=${encodeURIComponent(this.REQUEST_TYPES)}`;
+    const urls = [this.apiProxyBase + '/api/catalogEverything' + typesQ, '/api/catalogEverything' + typesQ];
+
+    if(this.el.itemsMount) this.el.itemsMount.innerHTML = '<div class="loading-plain">Loading menu…</div>';
+    let lastErr = null;
+    for(const url of urls){
+      try{
+        const data = await this._fetchJSON(url, { headers:{ Accept:'application/json' } }, 12000);
+        const objects = data?.objects || data?.result?.objects || [];
+        if(!Array.isArray(objects) || objects.length===0) throw new Error('Empty catalogue response');
+        this._normalise(objects);
+        this._buildCategoryNav();
+        const first = Object.keys(this.itemsByCategoryId)[0];
+        if(first) this._setActiveCategory(first);
+        return;
+      }catch(e){ lastErr = e; if (DEBUG) console.warn('catalog fetch err', url, e); }
+    }
+    if(this.el.itemsMount) this.el.itemsMount.innerHTML = '<div class="loading-plain">Could not load menu.</div>';
+    try { Swal.fire({ title: 'Menu load failed', text: 'Could not load the menu. Please refresh.', icon: 'error', confirmButtonColor:'#2563eb' }); } catch(e){}
+    if (DEBUG) console.error('All catalog endpoints failed. Last error:', lastErr);
+  }
+
+  _normalise(objects){
+    objects.forEach(o=>{
+      try{
+        const t = o.type;
+        if(t === 'CATEGORY') {
+          this.categoriesById[o.id] = { id:o.id, name:o.category_data?.name || o.name || 'Unnamed' };
+          return;
+        }
+        if(t === 'ITEM') {
+          this.itemsById[o.id] = { id:o.id, ...(o.item_data||{}) };
+          const nested = o.item_data?.variations || [];
+          if(Array.isArray(nested) && nested.length){
+            if(!this.variationsByItemId[o.id]) this.variationsByItemId[o.id] = [];
+            nested.forEach(nv => {
+              const varId = nv.id || nv.item_variation_data?.id || (`${o.id}-v-${(nv.item_variation_data?.name||nv.name||'var').replace(/\s+/g,'_')}`);
+              const varData = nv.item_variation_data || nv;
+              const vObj = { id: varId, item_variation_data: varData };
+              if(!vObj.item_variation_data.price_money && nv.price_money) vObj.item_variation_data.price_money = nv.price_money;
+              this.variationsByItemId[o.id].push(vObj);
+            });
+            this.variationsByItemId[o.id] = _dedupeVariations(this.variationsByItemId[o.id]);
+          }
+          return;
+        }
+        if(t === 'ITEM_VARIATION') {
+          const v = { id: o.id, ...(o.item_variation_data || o) };
+          const itemId = v.item_id || o.item_variation_data?.item_id;
+          if(itemId){
+            if(!this.variationsByItemId[itemId]) this.variationsByItemId[itemId] = [];
+            this.variationsByItemId[itemId].push(o);
+            this.variationsByItemId[itemId] = _dedupeVariations(this.variationsByItemId[itemId]);
+          }
+          return;
+        }
+        if(t === 'MODIFIER_LIST') {
+          this.modifierListsById[o.id] = { id:o.id, ...(o.modifier_list_data||{}) };
+          return;
+        }
+        if(t === 'ITEM_OPTION') {
+          this.itemOptionsById[o.id] = { id:o.id, ...(o.item_option_data||{}) };
+          return;
+        }
+      }catch(e){ if (DEBUG) console.warn('normalise single object failed', e, o); }
+    });
+
+    Object.values(this.itemsById).forEach(item=>{
+      const cid = this._resolvePrimaryCategory(item);
+      if(!this.itemsByCategoryId[cid]) this.itemsByCategoryId[cid] = [];
+      this.itemsByCategoryId[cid].push(item.id);
+    });
+  }
+
+  _resolvePrimaryCategory(item){
+    if(Array.isArray(item.categories) && item.categories.length) return item.categories[0].id;
+    if(item.reporting_category?.id) return item.reporting_category.id;
+    if(item.category_id) return item.category_id;
+    if(Array.isArray(item.category_path_to_root) && item.category_path_to_root.length) return item.category_path_to_root[item.category_path_to_root.length-1];
+    return 'uncategorized';
+  }
+
+  _buildCategoryNav(){
+    const ids = Object.keys(this.categoriesById);
+    if(!this.el.categoryNav) return;
+    this.el.categoryNav.innerHTML = ids.map(id=>{
+      const c=this.categoriesById[id];
+      const cnt=(this.itemsByCategoryId[id]||[]).length;
+      if(!cnt) return '';
+      const name = String(c.name || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<button class="category-pill child" data-category="${id}">${name}</button>`;
+    }).join('');
+    this.el.categoryNav.onclick = (e)=>{
+      const btn = e.target.closest('.category-pill.child');
+      if(!btn) return;
+      this.el.categoryNav.querySelectorAll('.category-pill.child').forEach(x=>x.classList.remove('selected'));
+      btn.classList.add('selected');
+      this._setActiveCategory(btn.dataset.category);
+    };
+  }
+  _setActiveCategory(catId){ this.activeCategoryId = catId; this._renderCategoryItems(catId); }
+
+  _renderCategoryItems(categoryId){
+    const itemIds = this.itemsByCategoryId[categoryId] || [];
+    if(!itemIds.length){ if(this.el.itemsMount) this.el.itemsMount.innerHTML = '<div class="loading-plain">No items.</div>'; return; }
+    this.el.itemsMount.innerHTML = itemIds.map(id => this._renderItemCard(this.itemsById[id])).join('');
+    this.el.itemsMount.querySelectorAll('.item-header').forEach(h=>{
+      h.addEventListener('click', (ev)=>{
+        if(ev.target.closest('.option-badge')) return;
+        const card = h.closest('.item-card'); const details = card.querySelector('.item-details'); const open = card.classList.contains('expanded');
+        this.el.itemsMount.querySelectorAll('.item-card.expanded').forEach(c=>{ if(c!==card){ c.classList.remove('expanded'); c.querySelector('.item-details').style.maxHeight = 0; }});
+        if(!open){ card.classList.add('expanded'); this._ensureDefaults(card); this._recalcCardPrice(card); details.style.maxHeight = details.scrollHeight + 'px'; } else { card.classList.remove('expanded'); details.style.maxHeight = 0; }
+      });
+    });
+    this.el.itemsMount.querySelectorAll('.add-to-cart-btn').forEach(btn=>btn.addEventListener('click',(e)=>{ e.stopPropagation(); this._addCardToCart(e.currentTarget.closest('.item-card')); }));
+  }
+
+  _renderItemCard(item){
+    const vars = _dedupeVariations(this.variationsByItemId[item.id] || []);
+    const price = vars.length===1 ? (vars[0].item_variation_data?.price_money?.amount || vars[0].price_money?.amount || 0) : (this._lowestVar(item.id) || 0);
+    const desc = (item.description_plaintext || item.description || '').replace(/</g,'&lt;');
+    return `
+      <div class="item-card" data-item-id="${item.id}">
+        <div class="item-header">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <h4 class="item-title">${item.name}</h4>
+              <div class="item-price">${this._formatPrice(price)}</div>
+            </div>
+            ${desc?`<div class="item-desc">${desc}</div>`:''}
+          </div>
+        </div>
+        <div class="item-details"><div class="item-details-inner">
+          ${this._renderVariations(vars)}
+          ${this._renderModifiers(item, vars)}
+          ${this._renderItemOptions(item, vars)}
+          <button class="add-to-cart-btn" disabled>Add to cart</button>
+        </div></div>
+      </div>`;
+  }
+  _lowestVar(itemId){
+    const v=_dedupeVariations(this.variationsByItemId[itemId]||[]); if(!v.length) return null;
+    const sorted=[...v].sort((a,b)=>{
+      const aa = (a.item_variation_data?.price_money?.amount || a.price_money?.amount || 0);
+      const bb = (b.item_variation_data?.price_money?.amount || b.price_money?.amount || 0);
+      return aa - bb;
+    });
+    return sorted[0].item_variation_data?.price_money?.amount || sorted[0].price_money?.amount || null;
+  }
+
+  _renderVariations(vars){
+    const vlist = _dedupeVariations(vars||[]);
+    if(!vlist.length) return '';
+    if(vlist.length === 1){
+      const v = vlist[0];
+      const price = v.item_variation_data?.price_money?.amount || v.price_money?.amount || 0;
+      return `<input type="hidden" class="auto-variation" value="${v.id}" data-price="${price}" data-group-name="Size" />`;
+    }
+    const badges = vlist.map(v=>{
+      const price = v.item_variation_data?.price_money?.amount || v.price_money?.amount || 0;
+      const priceLabel = price ? ' ' + this._formatPrice(price) : '';
+      const name = (v.item_variation_data?.name || v.name || '').replace(/"/g,'&quot;');
+      return `<button type="button" class="option-badge" data-kind="variation" data-id="${v.id}" data-price="${price}" data-group-name="Size">${name}${priceLabel}</button>`;
+    }).join('');
+    return `<div class="option-group" data-group-type="variation" data-min="1" data-max="1" data-name="Size">
+      <div class="option-label required">Choose a size</div>
+      <div class="badge-row">${badges}</div>
+    </div>`;
+  }
+
+  _renderModifiers(item, vars = []){
+    if(!Array.isArray(item.modifier_list_info) || !item.modifier_list_info.length) return '';
+    const variationNames = (vars||[]).map(v=> normalizeOptionName(v.item_variation_data?.name || v.name)).filter(Boolean);
+    let html = '';
+    item.modifier_list_info.filter(i=>i.enabled!==false && i.hidden_from_customer!==true)
+      .sort((a,b)=>(a.ordinal||0)-(b.ordinal||0))
+      .forEach(info=>{
+        const list = this.modifierListsById[info.modifier_list_id]; if(!list) return;
+        const modifierNamesRaw = (list.modifiers||[]).map(m=> (m.modifier_data?.name || m.name || '')).filter(Boolean);
+        const modifierNames = modifierNamesRaw.map(n=> normalizeOptionName(n)).filter(Boolean);
+        if(modifierNames.length && variationNames.length){
+          const allModifiersInVariations = modifierNames.every(n => variationNames.includes(n));
+          const allVariationsInModifiers = variationNames.every(n => modifierNames.includes(n));
+          const overlap = modifierNames.some(n => variationNames.includes(n));
+          const looksLikeSize = /size|variant|variation|burger size|burger/i.test(list.name || '');
+          if(allModifiersInVariations || allVariationsInModifiers || (looksLikeSize && overlap)){
+            return;
+          }
+        }
+        let minSel = (info.min_selected_modifiers != null && info.min_selected_modifiers !== -1) ? info.min_selected_modifiers : (list.min_selected_modifiers != null && list.min_selected_modifiers !== -1 ? list.min_selected_modifiers : 0);
+        let maxSel = (info.max_selected_modifiers != null && info.max_selected_modifiers !== -1) ? info.max_selected_modifiers : (list.max_selected_modifiers != null && list.max_selected_modifiers !== -1 ? list.max_selected_modifiers : (list.selection_type==='SINGLE' ? 1 : 99));
+        const required = minSel > 0;
+        const hint = (maxSel===1) ? 'Choose 1' : (required ? `Select at least ${minSel}${maxSel<99?`, up to ${maxSel}`:''}` : `Optional${maxSel<99?`, up to ${maxSel}`:''}`);
+        html += `<div class="option-group" data-group-type="modifier" data-min="${minSel}" data-max="${maxSel}" data-name="${(list.name||'Options').replace(/"/g,'&quot;')}">
+          <div class="option-label ${required?'required':''}">${list.name}</div>
+          <div class="badge-row">
+            ${(list.modifiers||[]).map(m=>{ const md = m.modifier_data; if(!md) return ''; const price = md.price_money?.amount || 0; const def = md.on_by_default ? 'data-default="1"' : ''; return `<button type="button" class="option-badge" data-kind="modifier" data-id="${m.id}" data-price="${price}" ${def} data-group-name="${(list.name||'Options').replace(/"/g,'&quot;')}">${md.name}${price? ' '+this._formatPrice(price):''}</button>`; }).join('')}
+          </div>
+          <div class="option-hint">${hint}</div>
+        </div>`;
+      });
+    return html;
+  }
+
+  _renderItemOptions(item, vars = []){
+    const optionIds = item.item_option_ids || (item.item_options||[]).map(o=>o.item_option_id) || [];
+    if(!Array.isArray(optionIds) || !optionIds.length) return '';
+
+    const referencedOptionIds = new Set();
+    const itemVars = vars && vars.length ? vars : (this.variationsByItemId[item.id] || []);
+    itemVars.forEach(v=>{
+      try{
+        const values = v.item_option_values || v.item_variation_data?.item_option_values || [];
+        (values||[]).forEach(val => { if(val && val.item_option_id) referencedOptionIds.add(val.item_option_id); });
+      }catch(e){}
+    });
+
+    const filteredOptionIds = optionIds.filter(oid => !referencedOptionIds.has(oid));
+    if(!filteredOptionIds.length) return '';
+
+    return filteredOptionIds.map(oid=>{
+      const opt = this.itemOptionsById[oid]; if(!opt) return '';
+      const single = opt.selection_type === 'SINGLE';
+      const min=0, max= single ? 1 : 99; const hint = single ? 'Choose 1' : 'Optional';
+      const vals = (opt.values||[]).map(v=>{ const vd = v.item_option_value_data; const price = vd?.price_money?.amount||0; return `<button type="button" class="option-badge" data-kind="item_option" data-id="${v.id}" data-price="${price}" data-group-name="${(opt.name||'Options').replace(/"/g,'&quot;')}">${vd?.name||'Option'}${price? ' '+this._formatPrice(price):''}</button>`; }).join('');
+      return `<div class="option-group" data-group-type="item_option" data-min="${min}" data-max="${max}" data-name="${(opt.name||'Options').replace(/"/g,'&quot;')}">
+        <div class="option-label">${opt.name}</div>
+        <div class="badge-row">${vals}</div>
+        <div class="option-hint">${hint}</div>
+      </div>`;
+    }).join('');
+  }
+
+  _ensureDefaults(card){
+    try{
+      card.querySelectorAll('.option-group[data-group-type="modifier"]').forEach(gr=>{
+        const min = parseInt(gr.dataset.min||'0',10);
+        gr.querySelectorAll('.option-badge[data-default="1"]').forEach(b=>b.classList.add('selected'));
+        const selected = gr.querySelectorAll('.option-badge.selected').length;
+        if(selected < min) [...gr.querySelectorAll('.option-badge:not(.selected)')].slice(0, min-selected).forEach(b=>b.classList.add('selected'));
+      });
+    }catch(e){}
+    try{
+      const vg = card.querySelector('.option-group[data-group-type="variation"]');
+      if(vg && !vg.querySelector('.option-badge.selected')){ const f = vg.querySelector('.option-badge'); if(f) f.classList.add('selected'); }
+    }catch(e){}
+    const autoVar = card.querySelector('.auto-variation');
+    if(autoVar){ card.dataset.variationId = autoVar.value; card.dataset.variationPrice = autoVar.dataset.price; }
+  }
+
+  _handleBadgeToggle(card,badge){
+    const g = badge.closest('.option-group'); if(!g) return;
+    const min = parseInt(g.dataset.min||'0',10); const max = parseInt(g.dataset.max||'99',10);
+    const kind = badge.dataset.kind; const isSel = badge.classList.contains('selected');
+    if(kind === 'variation'){
+      g.querySelectorAll('.option-badge').forEach(x=>x.classList.remove('selected'));
+      badge.classList.add('selected'); this._recalcCardPrice(card); return;
+    }
+    const selectedNow = [...g.querySelectorAll('.option-badge.selected')];
+    if(max === 1){
+      if(isSel){ if(min === 0) badge.classList.remove('selected'); }
+      else { selectedNow.forEach(x=>x.classList.remove('selected')); badge.classList.add('selected'); }
+    } else {
+      if(isSel){ if(selectedNow.length > min) badge.classList.remove('selected'); }
+      else { if(selectedNow.length >= max){ badge.classList.add('locked'); setTimeout(()=>badge.classList.remove('locked'),300); return; } badge.classList.add('selected'); }
+    }
+    this._recalcCardPrice(card);
+  }
+
+  _recalcCardPrice(card){
+    const itemId = card.dataset.itemId; const vars = _dedupeVariations(this.variationsByItemId[itemId]||[]); let total = 0; let variationName = '';
+    if(vars.length===1){ total = vars[0].item_variation_data?.price_money?.amount || vars[0].price_money?.amount || 0; variationName = vars[0].item_variation_data?.name || vars[0].name; card.dataset.variationId = vars[0].id; }
+    else if(vars.length>1){
+      const sel = card.querySelector('.option-badge[data-kind="variation"].selected');
+      if(sel){ total += parseInt(sel.dataset.price||'0',10); variationName = sel.textContent.trim(); card.dataset.variationId = sel.dataset.id; }
+    }
+    card.querySelectorAll('.option-badge[data-kind="modifier"].selected').forEach(b=> total += parseInt(b.dataset.price||'0',10));
+    card.querySelectorAll('.option-badge[data-kind="item_option"].selected').forEach(b=> total += parseInt(b.dataset.price||'0',10));
+    let ok = true; card.querySelectorAll('.option-group').forEach(g => { const gmin = parseInt(g.dataset.min||'0',10); if(gmin>0 && g.querySelectorAll('.option-badge.selected').length < gmin) ok = false; });
+    const btn = card.querySelector('.add-to-cart-btn');
+    btn.disabled = !ok; btn.textContent = ok ? `Add to cart ${this._formatPrice(total)}` : 'Select required options';
+    card.dataset.totalPrice = total; card.dataset.chosenVariationName = variationName;
+  }
+
+  _pizzaSizeFromCategories(item){
+    try{
+      const ids = (item.categories||[]).map(c=>c.id).filter(Boolean);
+      for(const id of ids){
+        const name = (this.categoriesById[id]?.name || '').trim();
+        const m = name.match(/^(\d{1,2})\s*["”]?\s*pizzas?/i);
+        if(m){ return `${m[1]}"`; }
+      }
+    }catch(_){}
+    return null;
+  }
+
+  _addCardToCart(card){
+    const itemId = card.dataset.itemId; const item = this.itemsById[itemId];
+    const total = parseInt(card.dataset.totalPrice||'0',10);
+    const variationName = (card.dataset.chosenVariationName || '').trim();
+
+    let isPizza = false;
+    try {
+      const catIds = (item.categories||[]).map(c=>c.id).filter(Boolean);
+      const names = catIds.map(id => (this.categoriesById[id]?.name||'').toLowerCase());
+      isPizza = names.some(n => /pizza/.test(n));
+    } catch(_) {}
+
+    const groups = [];
+    card.querySelectorAll('.option-group').forEach(gr=>{
+      const gname = (gr.dataset.name || gr.querySelector('.option-label')?.textContent || 'Options').trim();
+      const values = [...gr.querySelectorAll('.option-badge.selected')].map(b=>b.textContent.trim());
+      if(values.length>0) groups.push({ name:gname, values });
+    });
+
+    const baseName = (item.name || '').replace(/\s*\(Regular\)\s*/i,'').trim();
+    let displayName = baseName;
+    if(isPizza){
+      const sizeFromCat = this._pizzaSizeFromCategories(item);
+      const sizeLabel = sizeFromCat || (/^\d{1,2}("|”)?$/.test(variationName) ? (variationName.endsWith('"')?variationName:(variationName+'"')) : (/(inch|")/i.test(variationName)?variationName:''));
+      displayName = (sizeLabel? (sizeLabel+' ') : '') + baseName;
+    } else if(variationName && !/size/i.test(variationName)) {
+      displayName = `${baseName} (${variationName})`;
+    }
+
+    this.cart.push({ id: Date.now()+Math.random(), itemId, name: item.name, displayName, size: variationName || null, groups, price: total, qty:1 });
+    this._setLS('barnwell_cart', this.cart);
+    this._renderCart();
+    card.classList.remove('expanded'); card.querySelector('.item-details').style.maxHeight = 0;
+  }
+
+  _composeAddressString(fields){ return [fields?.line1,fields?.line2,fields?.city,fields?.postcode].filter(Boolean).join(', '); }
+  _populateManualFields(fields, fallback=''){ const f=fields||{line1:'',line2:'',city:'',postcode:''}; if(this.el.mLine1) this.el.mLine1.value = f.line1||''; if(this.el.mLine2) this.el.mLine2.value = f.line2||''; if(this.el.mCity) this.el.mCity.value = f.city||''; if(this.el.mPostcode) this.el.mPostcode.value = f.postcode || (fallback||'').split(',').pop()?.trim() || ''; }
+  _readManualFields(){ return { line1:this.el.mLine1.value.trim(), line2:this.el.mLine2.value.trim(), city:this.el.mCity.value.trim(), postcode:this.el.mPostcode.value.trim() }; }
+  _addressForReceipt(){
+    const f = this.selectedAddress?.fields || {};
+    const typed = (f.line1||f.line2||f.city||f.postcode) ? this._composeAddressString(f) : '';
+    return typed || this.selectedAddress?.address || this.selectedAddress?.geocodedAddress || '';
+  }
+
+  async _ensureLatLngForSelected(){
+    if(!this.selectedAddress) return;
+    if(this.selectedAddress.lat!=null && this.selectedAddress.lng!=null) return;
+    try{
+      const q=this.selectedAddress.fields?.postcode || this.selectedAddress.address || ''; if(!q) return;
+      const resp = await this._fetchJSON(`/api/geocode?postcode=${encodeURIComponent(q)}`);
+      const r=resp?.results?.[0]; const loc=r?.geometry?.location||{};
+      const lat = typeof loc.lat==='function'?loc.lat():loc.lat;
+      const lng = typeof loc.lng==='function'?loc.lng():loc.lng;
+      if(lat!=null && lng!=null){ 
+        this.selectedAddress.lat = lat; 
+        this.selectedAddress.lng = lng; 
+        // Only set geocodedAddress; do not overwrite typed address
+        this.selectedAddress.geocodedAddress = r.formatted_address || this.selectedAddress.geocodedAddress || null;
+      }
+    }catch(e){ if (DEBUG) console.warn('geocode failed', e); throw e; }
+  }
+
+  async _fetchZones(force=false){
+    const now = Date.now();
+    if(!force && this._zonesCache && (now - this._zonesFetchedAt) < (60*1000)) return this._zonesCache;
+    const candidates = ['/api/zonesPublic?activeOnly=true','/api/zonesAdminV2?activeOnly=true','/api/zones?activeOnly=true','/api/zones'];
+    let lastErr=null;
+    for(const u of candidates){
+      try{
+        const j = await this._fetchJSON(u, { method:'GET' }, 8000).catch(()=>null);
+        if(!j) continue;
+        const zones = j.zones || j.data || j || [];
+        if(Array.isArray(zones) && zones.length){
+          this._zonesCache = zones; this._zonesFetchedAt = Date.now(); return zones;
+        }
+      }catch(e){ lastErr=e; }
+    }
+    if (DEBUG) console.warn('No zones endpoints returned results.', lastErr);
+    return [];
+  }
+
+  _pointInRing(lng, lat, ring){
+    if(!Array.isArray(ring) || ring.length < 3) return false;
+    let inside = false;
+    for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+      const xi = Number(ring[i][0]), yi = Number(ring[i][1]);
+      const xj = Number(ring[j][0]), yj = Number(ring[j][1]);
+      const intersect = ((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi + 0.0) + xi);
+      if(intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  async _quoteForSelected(){
+    const a = this.selectedAddress;
+    if(!a){ this.currentQuote = { deliverable:false }; this._recomputeTotals(); return; }
+    try{
+      const payload = {};
+      if(a.lat!=null && a.lng!=null){ payload.lat = a.lat; payload.lng = a.lng; }
+      if(a.fields?.postcode) payload.postcode = a.fields.postcode;
+      const j = await this._fetchJSON('/api/delivery-price', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload) }, 12000).catch(()=>null);
+      if(j && (j.deliverable === true || j.matched === true)){
+        const pricePence = (typeof j.price_pence === 'number') ? j.price_pence : Math.round(Number(j.price||0) * 100);
+        this.currentQuote = { deliverable:true, price_pence: pricePence, zoneName: j.zoneName || j.zone || (j.zone_id || 'zone') };
+        this._recomputeTotals(); return;
+      }
+    }catch(e){ if (DEBUG) console.warn('delivery-price request failed, falling back to local zones', e); }
+
+    try{
+      const L = Number(a.lat), G = Number(a.lng);
+      if(!(L!=null && G!=null && !isNaN(L) && !isNaN(G))){ this.currentQuote = { deliverable:false }; this._recomputeTotals(); return; }
+
+      const zones = await this._fetchZones();
+      if(!zones || !zones.length){ this.currentQuote = { deliverable:false }; this._recomputeTotals(); return; }
+
+      let matchedZone = null;
+      for(const z of zones){
+        if(z.active === false) continue;
+        const ring = (z.polygon && z.polygon.coordinates && z.polygon.coordinates[0]) || z.ring || z.coordinates || null;
+        if(!Array.isArray(ring) || ring.length < 3) continue;
+        const normalized = ring.map(pt => [ Number(pt[0]), Number(pt[1]) ]);
+        if(this._pointInRing(G, L, normalized)){ matchedZone = z; break; }
+      }
+
+      if(matchedZone){
+        const pricePence = Number(matchedZone.price_pence != null ? matchedZone.price_pence : Math.round(Number(matchedZone.price || 0) * 100));
+        this.currentQuote = { deliverable:true, price_pence: pricePence, zoneName: matchedZone.name || matchedZone.id || 'Zone' };
+      } else { this.currentQuote = { deliverable:false }; }
+      this._recomputeTotals(); return;
+    }catch(e){
+      if (DEBUG) console.error('zones fallback quote failed', e);
+      this.currentQuote = { deliverable:false }; this._recomputeTotals(); return;
+    }
+  }
+
+  async _saveCurrentAddressLocally(){
+    const f = this._readManualFields();
+    if(!f.line1 || !f.postcode){ __barnwell_notify('Please enter address line 1 and postcode'); return; }
+    this.selectedAddress={label: f.line1,address:this._composeAddressString(f),fields:f,lat:null,lng:null,geocodedAddress:null};
+    this.addressConfirmed=false; try{ await this._ensureLatLngForSelected(); }catch(e){}
+    await this._quoteForSelected();
+    const toSave={ label: this.el.saveAddrLabel.value.trim() || f.line1, address: this._composeAddressString(f), fields: f, lat: this.selectedAddress.lat || null, lng: this.selectedAddress.lng || null, isDefault: this.savedAddresses.length===0 };
+    const exists = this.savedAddresses.some(s=> (s.address && toSave.address && s.address.trim().toLowerCase()===toSave.address.trim().toLowerCase()) || (s.lat!=null && s.lng!=null && toSave.lat!=null && Math.hypot(s.lat-toSave.lat, s.lng-toSave.lng) < 0.0002));
+    if(!exists){
+      this.savedAddresses.unshift(toSave); this.savedAddresses=this.savedAddresses.slice(0,16); this._setLS('saved_addresses', this.savedAddresses); this.el.saveAddrLabel.value='';
+      if(this.currentQuote && this.currentQuote.deliverable){ this.addressConfirmed=true; __barnwell_notify('Address saved and delivery available'); }
+      else { this.addressConfirmed=false; __barnwell_notify('Address saved. Delivery not available'); }
+    } else __barnwell_notify('Address already saved');
+    this._renderSavedAddressesUI(); this._recomputeTotals();
+  }
+
+  _renderSavedAddressesUI(){
+    const c=this.el.savedAddressesContainer; if(!c) return;
+    c.innerHTML='';
+    if(!this.savedAddresses.length){ c.innerHTML='<div class="small-muted">No saved addresses yet</div>'; return;}
+    this.savedAddresses.forEach((a,idx)=>{
+      const card=document.createElement('div');
+      card.style.cssText='display:flex;justify-content:space-between;gap:8px;padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px';
+      card.innerHTML=`<div style="min-width:0"><div style="font-weight:900">${a.label || 'Saved address'}${a.isDefault?'<span style="color:var(--primary);font-weight:800;margin-left:6px">Default</span>':''}</div><div style="color:var(--muted);font-size:13px;margin-top:6px">${a.address||''}</div></div><div class="saved-address-actions"><button class="saved-btn use" data-idx="${idx}">Use</button><button class="saved-btn default" data-idx="${idx}">Default</button><button class="saved-btn remove" data-idx="${idx}">Remove</button></div>`;
+      c.appendChild(card);
+    });
+    if(!c._handler){
+      c.addEventListener('click',(ev)=>{
+        const b=ev.target.closest('button'); if(!b) return;
+        const action=b.className.split(' ').find(x=>['use','default','remove'].includes(x));
+        const idx=Number(b.dataset.idx);
+        if(action==='use'){
+          const a=this.savedAddresses[idx]; if(!a) return;
+          this.selectedAddress = JSON.parse(JSON.stringify(a));
+          this.addressConfirmed=true;
+          this._populateManualFields(a.fields||null,a.address||'');
+          this._ensureLatLngForSelected().then(()=>this._quoteForSelected()).then(()=>{ this._renderSavedAddressesUI(); this._recomputeTotals(); });
+        } else if(action==='default'){
+          this.savedAddresses=this.savedAddresses.map((s,i)=>({...s,isDefault:i===idx}));
+          this._setLS('saved_addresses', this.savedAddresses); this._renderSavedAddressesUI(); __barnwell_notify('Default saved');
+        } else if(action==='remove'){
+          this.savedAddresses.splice(idx,1); this._setLS('saved_addresses', this.savedAddresses); this._renderSavedAddressesUI(); this._recomputeTotals(); __barnwell_notify('Address removed');
+        }
+      });
+      c._handler=true;
+    }
+  }
+
+  _recomputeTotals(){
+    const subtotal = this.cart.reduce((s,i)=>s + i.price * (i.qty||1),0);
+    const deliveryPence = this.fulfilment==='collection' ? 0 : ((this.currentQuote && typeof this.currentQuote.price_pence==='number')?this.currentQuote.price_pence:0);
+    this.el.sumSubtotal.textContent = this._formatPrice(subtotal);
+    this.el.sumDelivery.textContent = this._formatPrice(deliveryPence);
+    this.el.sumTotal.textContent = this._formatPrice(subtotal+deliveryPence);
+
+    const hasName = !!(this.el.custName.value.trim().length>0);
+    const hasPhone = !!(this.el.custPhone.value.trim().length>0);
+    const hasTime = !!this.selectedTime;
+    const storeOpen = this.businessHours.closed !== true;
+
+    if(this.fulfilment === 'collection'){
+      this.el.placeOrderBtn.disabled = !(this.cart.length>0 && hasName && hasPhone && hasTime && storeOpen);
+    } else {
+      const addrText = this._addressForReceipt();
+      const hasAddrText = !!addrText;
+      const isDeliverable = !!(this.currentQuote && (this.currentQuote.deliverable === true || this.currentQuote.matched === true));
+      this.el.placeOrderBtn.disabled = !(this.cart.length>0 && hasName && hasPhone && hasAddrText && this.addressConfirmed && isDeliverable && hasTime && storeOpen);
+    }
+  }
+
+  async _loadSettings(){
+    try{
+      const j = await this._fetchJSON('/api/settings', { headers:{'Accept':'application/json'}}, 8000);
+      if(j?.businessHours) this.businessHours = Object.assign({}, this.businessHours, j.businessHours);
+      if(j?.slotConfig) this.slotConfig = Object.assign({}, this.slotConfig, j.slotConfig);
+      this._updateClosedBanner();
+    }catch(e){}
+  }
+
+  _normalizePhoneUK(raw){
+    let s = String(raw||'').replace(/[^\d+0-9]/g,'');
+    if (s.startsWith('00')) s = '+' + s.slice(2);
+    if (/^0\d{9,10}$/.test(s)) s = '+44' + s.slice(1);
+    if (/^\d{10,11}$/.test(s)) s = '+44' + s;
+    return s;
+  }
+
+  _buildReceiptSummaryLines(){
+    const lines = [];
+    for(const c of this.cart){
+      const qty = c.qty||1;
+      const totalPrice = c.price * qty;
+      lines.push(`- ${qty} × **${c.displayName || c.name}** — ${this._formatPrice(totalPrice)}`);
+      const sizeGroup = (c.groups||[]).find(g => /^size$/i.test(g.name||''));
+      if(sizeGroup && sizeGroup.values && sizeGroup.values.length){
+        lines.push(`  • **SIZE** ${sizeGroup.values.join(', ')}`);
+      }
+      (c.groups||[]).forEach(g=>{
+        if(!g.values || !g.values.length) return;
+        if(/^size$/i.test(g.name||'')) return;
+        lines.push(`  • **${g.name}** ${g.values.join(', ')}`);
+      });
+      lines.push('------------------------------------------------------------------------------');
+    }
+    return lines;
+  }
+
+  _escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+
+  _showPaymentModal(link, printable) {
+    const printableEsc = this._escapeHtml(printable || '');
+    const html = `
+      <div style="text-align:left">
+        <div style="margin-bottom:8px"><a href="${this._escapeHtml(link)}" target="_blank" rel="noopener" style="font-weight:800;color:#2563eb">Open payment link (opens in a new tab)</a></div>
+        <div style="margin-bottom:8px;font-size:13px;color:var(--muted)">Printable receipt (tap to expand):</div>
+        <details style="background:#f8fafc;padding:8px;border-radius:8px;border:1px solid #e6eefc">
+          <summary style="cursor:pointer;font-weight:800">Show receipt</summary>
+          <pre id="swal-receipt" style="white-space:pre-wrap;font-family:monospace;margin:8px 0 0 0;font-size:13px">${printableEsc}</pre>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="swal-copy-receipt" class="swal2-confirm" style="background:#fff;color:#2563eb;border:1px solid #e6eefc;padding:6px 8px;border-radius:8px">Copy receipt</button>
+            <button id="swal-download-receipt" style="background:#fff;color:#2563eb;border:1px solid #e6eefc;padding:6px 8px;border-radius:8px">Download .txt</button>
+          </div>
+        </details>
+      </div>
+    `;
+
+    Swal.fire({
+      title: 'Confirm & Pay',
+      html,
+      showCancelButton: true,
+      confirmButtonText: 'Proceed to payment (redirect)',
+      cancelButtonText: 'Close',
+      width: 700,
+      didOpen: () => {
+        const copyBtn = document.getElementById('swal-copy-receipt');
+        if (copyBtn) {
+          copyBtn.addEventListener('click', () => {
+            const txt = printable || '';
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(txt).then(()=> { __barnwell_notify('Receipt copied to clipboard'); }).catch(()=> { __barnwell_notify('Copy failed'); });
+            } else {
+              try { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); __barnwell_notify('Receipt copied to clipboard'); } catch(e) { __barnwell_notify('Copy failed'); }
+            }
+          });
+        }
+        const dlBtn = document.getElementById('swal-download-receipt');
+        if (dlBtn) {
+          dlBtn.addEventListener('click', () => {
+            const blob = new Blob([printable || ''], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const fname = 'barnwell_receipt.txt';
+            a.download = fname;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          });
+        }
+      }
+    }).then((res) => {
+      if (res.isConfirmed) {
+        window.location.href = link;
+      }
+    });
+  }
+
+  async _placeOrder(){
+    try{
+      const name=this.el.custName.value.trim();
+      const phone=this.el.custPhone.value.trim();
+      const email=this.el.custEmail.value.trim();
+      if(!name||!phone){ __barnwell_notify('Enter name and phone'); return; }
+
+      if(this.fulfilment==='delivery'){
+        if((!this.selectedAddress || !this.addressConfirmed) && Array.isArray(this.savedAddresses) && this.savedAddresses.length){
+          const fallback = this.savedAddresses.find(a=>a.isDefault) || this.savedAddresses[0];
+          if(fallback){
+            this.selectedAddress = JSON.parse(JSON.stringify(fallback));
+            this.addressConfirmed = true;
+            this._populateManualFields(fallback.fields||null, fallback.address||'');
+          }
+        }
+        try{ await this._ensureLatLngForSelected(); }catch(e){
+          Swal.fire({ title:'Address lookup failed', text:'Please check the postcode and try again.', icon:'error', confirmButtonColor:'#2563eb' });
+          return;
+        }
+        await this._quoteForSelected();
+        if(!(this.currentQuote && this.currentQuote.deliverable)){ __barnwell_notify('Delivery not available for this address'); return; }
+      }
+
+      const subtotal = this.cart.reduce((s,i)=>s + i.price * (i.qty||1),0);
+      const deliveryFee = (this.fulfilment==='delivery' && this.currentQuote && typeof this.currentQuote.price_pence === 'number') ? this.currentQuote.price_pence : 0;
+
+      const orderLines = this._buildReceiptSummaryLines();
+      const dateTimeLine = this.selectedTime ? new Date(this.selectedTime).toLocaleString() : 'ASAP';
+      const addressForReceipt = this._addressForReceipt();
+      const customerBlock = [
+        `**${this.fulfilment.toUpperCase()}** — **${dateTimeLine}**`,
+        name,
+        this._normalizePhoneUK(phone),
+        ...(this.fulfilment==='delivery' ? [ addressForReceipt ] : []),
+      ].join('\n');
+
+      const payload = {
+        items: this.cart.map(c=>({ name: c.displayName || c.name, quantity: c.qty||1, unit_pence: c.price , groups: Array.isArray(c.groups) ? c.groups : []})),
+        delivery_fee_pence: deliveryFee,
+        currency: 'GBP',
+        title: 'Barnwell Grill Order',
+        idempotency_key: 'idem_' + Math.random().toString(36).slice(2) + '_' + Date.now(),
+        meta:{
+          fulfilment: this.fulfilment,
+          scheduled_at: this.selectedTime || null,
+          address: this.fulfilment==='delivery' ? addressForReceipt : null,
+          payment_method: this.paymentMethod,
+          customer:{ name, phone: this._normalizePhoneUK(phone), email }
+        }
+      };
+
+      const localSummary = [
+        customerBlock,'',...orderLines,'',
+        `Subtotal: ${this._formatPrice(subtotal)}`,
+        `Delivery: ${this._formatPrice(deliveryFee)}`,
+        `Total: ${this._formatPrice(subtotal+deliveryFee)}`
+      ].join('\n');
+
+      const btn = this.el.placeOrderBtn;
+      const prevText = btn ? btn.textContent : null;
+      if(btn){ btn.disabled = true; btn.textContent = 'Processing...'; }
+
+      if (this.paymentMethod === 'cash') {
+        // CASH PATH: send straight to printer
+        let r = null;
+        try{
+          r = await this._fetchJSON('/api/create-cash-order', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(payload)
+          }, 20000);
+        }catch(e){
+          Swal.fire({ title:'Order failed', text:`Could not submit cash order: ${e.message || e}`, icon:'error', confirmButtonColor:'#2563eb' });
+          if(btn){ btn.disabled = false; btn.textContent = prevText || 'Place order'; }
+          return;
+        }
+        const printable = r?.printable_receipt || localSummary;
+        try {
+          localStorage.setItem('last_order_printable', printable);
+          if (r?.order_ref) localStorage.setItem('last_order_ref', r.order_ref);
+        } catch(e){}
+        Swal.fire({
+          title: 'Thanks for your order!',
+          html: `<pre style="text-align:left;white-space:pre-wrap;font-family:monospace;font-size:13px;margin:0">${this._escapeHtml(printable)}</pre>`,
+          icon: 'success',
+          confirmButtonText: 'Close',
+          confirmButtonColor: '#2563eb',
+          width: 680
+        }).then(()=>{
+          try { localStorage.removeItem('last_order_printable'); localStorage.removeItem('last_order_ref'); } catch(e){}
+          this.cart = []; this._setLS('barnwell_cart', this.cart); this._renderCart();
+          this._closeCheckout();
+        });
+        return;
+      }
+
+      // CARD PATH
+      let r = null;
+      try{
+        r = await this._fetchJSON('/api/create-checkout-link', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        }, 20000);
+      }catch(e){
+        Swal.fire({ title:'Order failed', text:`Could not create checkout link: ${e.message || e}`, icon:'error', confirmButtonColor:'#2563eb' });
+        if(btn){ btn.disabled = false; btn.textContent = prevText || 'Place order'; }
+        return;
+      } finally {
+        if(btn && (!r || !r.url)) { btn.disabled = false; btn.textContent = prevText || 'Place order'; }
+      }
+
+      const link = r?.url || r?.payment_link?.url || '';
+      const printable = r?.printable_receipt || localSummary;
+      try {
+        localStorage.setItem('last_order_printable', printable);
+        if (r?.order_ref) localStorage.setItem('last_order_ref', r.order_ref);
+        if (r?.payment_link_id) localStorage.setItem('last_payment_link_id', r.payment_link_id);
+        localStorage.setItem('expect_return', '1');
+      } catch(e){}
+
+      if(!link){
+        __barnwell_notify(r?.error || r?.message || 'Checkout link missing');
+        return;
+      }
+      if (OPEN_SQUARE_MODE === 'redirect') window.location.replace(link);
+      else this._showPaymentModal(link, printable);
+    }catch(e){
+      Swal.fire({ title:'Order error', text: String(e && e.message || e), icon:'error', confirmButtonColor:'#2563eb' });
+    } finally {
+      try{ const btn2 = this.el.placeOrderBtn; if(btn2){ btn2.disabled = false; btn2.textContent = 'Place order'; } }catch(e){}
+    }
+  }
+
+  async _maybeShowReturnSummary(){
+    const params = new URLSearchParams(location.search);
+    const paid = params.get('paid') || params.get('success') || null;
+    const refQ = params.get('ref') || '';
+    const expect = localStorage.getItem('expect_return') === '1';
+    if(sessionStorage.getItem('return_alert_shown')) return;
+
+    const printableLS = (()=>{ try { return localStorage.getItem('last_order_printable') || null; } catch(e){ return null; } })();
+    const orderRefLS = (()=>{ try { return localStorage.getItem('last_order_ref') || null; } catch(e){ return null; } })();
+    const linkIdLS = (()=>{ try { return localStorage.getItem('last_payment_link_id') || null; } catch(e){ return null; } })();
+
+    const maybeId = refQ || orderRefLS || linkIdLS;
+
+    const showAndClear = (printableText) => {
+      sessionStorage.setItem('return_alert_shown','1');
+      Swal.fire({
+        title: 'Thanks for your order!',
+        html: `<pre style="text-align:left;white-space:pre-wrap;font-family:monospace;font-size:13px;margin:0">${this._escapeHtml(printableText||'Order placed successfully.')}</pre>`,
+        icon: 'success',
+        confirmButtonText: 'Close',
+        confirmButtonColor: '#2563eb',
+        width: 680,
+        allowOutsideClick: true
+      }).then(()=> {
+        const url = new URL(location.href); url.search = ''; history.replaceState({}, '', url.toString());
+        try {
+          localStorage.removeItem('last_order_printable');
+          localStorage.removeItem('last_order_ref');
+          localStorage.removeItem('last_payment_link_id');
+          localStorage.removeItem('last_order_summary');
+          localStorage.removeItem('expect_return');
+        } catch(e){}
+        this.cart = []; this._setLS('barnwell_cart', this.cart); this._renderCart();
+      });
+    };
+
+    if (paid && printableLS) { showAndClear(printableLS); return; }
+
+    if ((paid || expect || refQ) && maybeId){
+      try{
+        const j = await this._fetchJSON('/api/checkout-session?id=' + encodeURIComponent(maybeId), { method:'GET' }, 8000);
+        if (j && j.ok) {
+          const printableServer = j.printable_receipt || printableLS || '';
+          showAndClear(printableServer || 'Order placed successfully.');
+          return;
+        }
+      }catch(e){}
+    }
+
+    if (paid) {
+      showAndClear(printableLS || 'Order placed successfully.');
+    }
+  }
+
+  async _openOrdersModal(){
+    try {
+      const phone = this._normalizePhoneUK(this.el.custPhone?.value || '');
+      const email = (this.el.custEmail?.value || '').trim();
+
+      const friendly = '<div style="font-weight:900;margin-bottom:6px">Order History</div><div class="note">Please check back once you have completed your first order to view your completed orders here.</div>';
+
+      if(!phone && !email){
+        this.el.ordersList.innerHTML = friendly;
+        this.el.ordersModal.classList.add('visible'); document.body.classList.add('modal-open');
+        return;
+      }
+      const url = `/api/user-orders?` + new URLSearchParams({ phone, email, limit:'10' }).toString();
+      const data = await this._fetchJSON(url, { method:'GET' }, 10000);
+      const orders = Array.isArray(data?.orders) ? data.orders : [];
+      if (!orders.length){
+        this.el.ordersList.innerHTML = friendly;
+      } else {
+        this.el.ordersList.innerHTML = orders.map(o=>{
+          const when = o.created_at ? new Date(o.created_at).toLocaleString() : '';
+          const total = this._formatPrice(o.total_pence || 0);
+          const mode = (o.meta?.fulfilment||'').toUpperCase();
+          const r = o.order_ref || '';
+          return `<div class="section" style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+            <div>
+              <div style="font-weight:900">${mode || 'ORDER'} — ${when}</div>
+              <div style="color:var(--muted);font-size:13px;margin-top:4px">Total ${total}</div>
+            </div>
+            <button class="saved-btn use" data-view-ref="${r}">View</button>
+          </div>`;
+        }).join('');
+        if (!this.el.ordersList._hooked){
+          this.el.ordersList.addEventListener('click', async (ev)=>{
+            const b = ev.target.closest('button[data-view-ref]'); if(!b) return;
+            const ref = b.getAttribute('data-view-ref');
+            try{
+              const j = await this._fetchJSON('/api/checkout-session?id=' + encodeURIComponent(ref), { method:'GET' }, 10000);
+              const text = j?.printable_receipt || 'Receipt not available.';
+              Swal.fire({
+                title: 'Order receipt',
+                html: `<pre style="text-align:left;white-space:pre-wrap;font-family:monospace;font-size:13px;margin:0">${this._escapeHtml(text)}</pre>`,
+                width: 700,
+                confirmButtonColor:'#2563eb'
+              });
+            }catch(e){
+              Swal.fire({ title:'Could not load receipt', text:String(e && e.message || e), icon:'error', confirmButtonColor:'#2563eb' });
+            }
+          });
+          this.el.ordersList._hooked = true;
+        }
+      }
+      this.el.ordersModal.classList.add('visible'); document.body.classList.add('modal-open');
+    } catch(e){
+      if (DEBUG) console.error('orders modal error', e);
+      Swal.fire({ title:'Could not load orders', text:String(e&&e.message||e), icon:'error', confirmButtonColor:'#2563eb' });
+    }
+  }
+  _closeOrdersModal(){ this.el.ordersModal?.classList.remove('visible'); document.body.classList.remove('modal-open'); }
+}
+
+window.addEventListener('DOMContentLoaded', ()=> new BarnwellOrderingSystem());
+</script>
+</body>
+</html>
